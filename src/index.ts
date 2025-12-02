@@ -229,7 +229,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
     });
 
     // Progress tracking state
-    const stats: ProgressStats = { requests: 0, errors: 0, vusers: 0, rps: 0 };
+    const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, vusers: 0, rps: 0 };
     const startTime = Date.now();
     let currentPhase = '';
     let progressInterval: ReturnType<typeof setInterval> | null = null;
@@ -253,11 +253,13 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       const progressBar = renderProgressBar(elapsed, totalDurationMs);
       const elapsedStr = formatDuration(elapsed);
       const totalStr = formatDuration(totalDurationMs);
+      const progressStats = formatProgressStats(stats);
 
       const lines = [
         `${progressBar} | ${elapsedStr} / ${totalStr}`,
         '',
-        chalk.gray(`   ${formatProgressStats(stats)}`),
+        chalk.gray(`   ${progressStats.main}`),
+        progressStats.errorBreakdown ? chalk.red(`   ⚠️  ${progressStats.errorBreakdown}`) : '',
         currentPhase ? chalk.blue(`   Phase: ${currentPhase}`) : '',
         '',
       ].filter(Boolean);
@@ -286,10 +288,18 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
         case 'vusers':
           stats.vusers = data.count as number;
           break;
-        case 'errors':
-          // Artillery reports cumulative errors per period, so use the count directly
-          stats.errors = data.count as number;
+        case 'errors': {
+          // Track error types for breakdown display
+          const errorType = data.errorType as string;
+          if (errorType) {
+            stats.errorTypes[errorType] = data.count as number;
+            // Recalculate total from all error types
+            stats.errors = Object.values(stats.errorTypes).reduce((a, b) => a + b, 0);
+          } else {
+            stats.errors = data.count as number;
+          }
           break;
+        }
         case 'complete':
           if (progressInterval) {
             clearInterval(progressInterval);

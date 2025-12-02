@@ -85,17 +85,34 @@ export function renderProgressBar(
 export interface ProgressStats {
   requests: number;
   errors: number;
+  errorTypes: Record<string, number>;
   vusers: number;
   rps: number;
 }
 
 /**
  * Format progress stats line
+ * Returns an object with the main stats line and optional error breakdown line
  */
-export function formatProgressStats(stats: ProgressStats): string {
+export function formatProgressStats(stats: ProgressStats): { main: string; errorBreakdown?: string } {
   const errorRate = stats.requests > 0
     ? ((stats.errors / stats.requests) * 100).toFixed(1)
     : '0.0';
 
-  return `Requests: ${formatNumber(stats.requests)} (${stats.rps}/s)  |  Errors: ${formatNumber(stats.errors)} (${errorRate}%)  |  VUs: ${stats.vusers}`;
+  const main = `Requests: ${formatNumber(stats.requests)} (${stats.rps}/s)  |  Errors: ${formatNumber(stats.errors)} (${errorRate}%)  |  VUs: ${stats.vusers}`;
+
+  // Build error type breakdown if errors exist
+  const errorEntries = Object.entries(stats.errorTypes);
+  let errorBreakdown: string | undefined;
+
+  if (errorEntries.length > 0) {
+    const breakdown = errorEntries
+      .sort((a, b) => b[1] - a[1])  // Sort by count descending
+      .slice(0, 3)  // Show top 3 error types
+      .map(([type, count]) => `${type}: ${formatNumber(count)}`)
+      .join('  |  ');
+    errorBreakdown = breakdown;
+  }
+
+  return { main, errorBreakdown };
 }
