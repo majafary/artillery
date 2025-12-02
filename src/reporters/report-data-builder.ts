@@ -109,20 +109,59 @@ export class ReportDataBuilder {
     // Get total requests (v2: counters['http.requests'], v1: requestsCompleted)
     const totalRequests = counters['http.requests'] || aggregate.requestsCompleted || 0;
 
-    // Count errors from counters (v2 format: errors.* keys)
-    let errorCount = 0;
+    // Extract HTTP status codes from counters (v2 format: http.codes.XXX keys)
+    const statusCodes: Record<number, number> = {};
+    for (const [key, value] of Object.entries(counters)) {
+      if (key.startsWith('http.codes.')) {
+        const code = parseInt(key.replace('http.codes.', ''), 10);
+        if (!isNaN(code)) {
+          statusCodes[code] = value;
+        }
+      }
+    }
+
+    // Also check legacy codes format
+    if (aggregate.codes) {
+      for (const [code, count] of Object.entries(aggregate.codes)) {
+        const codeNum = parseInt(code, 10);
+        if (!isNaN(codeNum) && !statusCodes[codeNum]) {
+          statusCodes[codeNum] = count;
+        }
+      }
+    }
+
+    // Calculate success (2xx) vs failure (4xx + 5xx) from status codes
+    let successCount = 0;
+    let clientErrors = 0;
+    let serverErrors = 0;
+    for (const [code, count] of Object.entries(statusCodes)) {
+      const codeNum = parseInt(code, 10);
+      if (codeNum >= 200 && codeNum < 300) {
+        successCount += count;
+      } else if (codeNum >= 400 && codeNum < 500) {
+        clientErrors += count;
+      } else if (codeNum >= 500) {
+        serverErrors += count;
+      }
+    }
+
+    // Count connection errors from counters (v2 format: errors.* keys)
+    let connectionErrors = 0;
     for (const [key, value] of Object.entries(counters)) {
       if (key.startsWith('errors.')) {
-        errorCount += value;
+        connectionErrors += value;
       }
     }
 
     // Also check legacy format
     if (aggregate.errors) {
       for (const value of Object.values(aggregate.errors)) {
-        errorCount += value;
+        connectionErrors += value;
       }
     }
+
+    // Total failed = HTTP 4xx + HTTP 5xx + connection errors
+    const failedRequests = clientErrors + serverErrors + connectionErrors;
 
     // Get VU counts
     const vusersCreated = counters['vusers.created'] || aggregate.scenariosCreated || 0;
@@ -135,15 +174,16 @@ export class ReportDataBuilder {
 
     return {
       totalRequests,
-      successfulRequests: Math.max(0, totalRequests - errorCount),
-      failedRequests: errorCount,
-      errorRate: totalRequests > 0 ? errorCount / totalRequests : 0,
+      successfulRequests: successCount,
+      failedRequests,
+      errorRate: totalRequests > 0 ? failedRequests / totalRequests : 0,
       throughput,
       virtualUsers: {
         total: vusersCreated,
         completed: vusersCompleted,
         failed: vusersFailed,
       },
+      statusCodes,
     };
   }
 

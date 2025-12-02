@@ -86,15 +86,20 @@ export interface ProgressStats {
   requests: number;
   errors: number;
   errorTypes: Record<string, number>;
+  statusCodes: Record<number, number>;
   vusers: number;
   rps: number;
 }
 
 /**
  * Format progress stats line
- * Returns an object with the main stats line and optional error breakdown line
+ * Returns an object with main stats, optional error breakdown, and HTTP status codes
  */
-export function formatProgressStats(stats: ProgressStats): { main: string; errorBreakdown?: string } {
+export function formatProgressStats(stats: ProgressStats): {
+  main: string;
+  errorBreakdown?: string;
+  statusLine?: string;
+} {
   const errorRate = stats.requests > 0
     ? ((stats.errors / stats.requests) * 100).toFixed(1)
     : '0.0';
@@ -114,5 +119,28 @@ export function formatProgressStats(stats: ProgressStats): { main: string; error
     errorBreakdown = breakdown;
   }
 
-  return { main, errorBreakdown };
+  // Build HTTP status code breakdown
+  const codeEntries = Object.entries(stats.statusCodes);
+  let statusLine: string | undefined;
+
+  if (codeEntries.length > 0) {
+    const breakdown = codeEntries
+      .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))  // Sort by code ascending
+      .map(([code, count]) => {
+        const codeNum = parseInt(code, 10);
+        // Color-code: 2xx green, 4xx yellow, 5xx red
+        if (codeNum >= 200 && codeNum < 300) {
+          return `${code}: ${formatNumber(count)}`;
+        } else if (codeNum >= 400 && codeNum < 500) {
+          return `${code}: ${formatNumber(count)}`;
+        } else if (codeNum >= 500) {
+          return `${code}: ${formatNumber(count)}`;
+        }
+        return `${code}: ${formatNumber(count)}`;
+      })
+      .join('  |  ');
+    statusLine = breakdown;
+  }
+
+  return { main, errorBreakdown, statusLine };
 }

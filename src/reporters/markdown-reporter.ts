@@ -105,6 +105,18 @@ const DEFAULT_TEMPLATE = `# Performance Test Report: {{metadata.testName}}
 ---
 {{/if}}
 
+{{#if statusCodesArray.length}}
+## HTTP Status Codes
+
+| Code | Description | Count | Percentage |
+|------|-------------|-------|------------|
+{{#each statusCodesArray}}
+| {{statusCodeEmoji this.code}} {{this.code}} | {{this.description}} | {{formatNumber this.count}} | {{formatPercent this.percentage}} |
+{{/each}}
+
+---
+{{/if}}
+
 ## Raw Data
 
 \`\`\`json
@@ -203,6 +215,14 @@ export class MarkdownReporter {
     ) {
       return arg1 === arg2 ? options.fn(this) : options.inverse(this);
     });
+
+    // Status code emoji
+    Handlebars.registerHelper('statusCodeEmoji', (code: number) => {
+      if (code >= 200 && code < 300) return '✅';
+      if (code >= 400 && code < 500) return '⚠️';
+      if (code >= 500) return '❌';
+      return '➡️';
+    });
   }
 
   /**
@@ -212,9 +232,22 @@ export class MarkdownReporter {
     // Convert Map to array for iteration
     const stepMetricsArray = Array.from(data.stepMetrics.values());
 
+    // Prepare HTTP status codes array
+    const statusCodes = data.summary.statusCodes || {};
+    const totalCodes = Object.values(statusCodes).reduce((a, b) => a + b, 0);
+    const statusCodesArray = Object.entries(statusCodes)
+      .map(([code, count]) => ({
+        code: parseInt(code, 10),
+        count,
+        description: getHttpStatusDescription(parseInt(code, 10)),
+        percentage: totalCodes > 0 ? count / totalCodes : 0,
+      }))
+      .sort((a, b) => a.code - b.code);
+
     const templateData = {
       ...data,
       stepMetricsArray,
+      statusCodesArray,
     };
 
     return this.template(templateData);
@@ -247,4 +280,33 @@ export async function saveMarkdownReport(
 ): Promise<void> {
   const reporter = new MarkdownReporter();
   await reporter.save(data, outputPath);
+}
+
+/**
+ * Get human-readable description for HTTP status code
+ */
+function getHttpStatusDescription(code: number): string {
+  const descriptions: Record<number, string> = {
+    200: 'OK',
+    201: 'Created',
+    202: 'Accepted',
+    204: 'No Content',
+    301: 'Moved Permanently',
+    302: 'Found (Redirect)',
+    304: 'Not Modified',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    422: 'Unprocessable Entity',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+  };
+  return descriptions[code] || `HTTP ${code}`;
 }

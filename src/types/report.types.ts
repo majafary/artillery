@@ -32,6 +32,7 @@ export interface TestSummary {
   errorRate: number;
   throughput: number;
   virtualUsers: VirtualUserStats;
+  statusCodes: Record<number, number>;
 }
 
 export interface VirtualUserStats {

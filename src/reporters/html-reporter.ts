@@ -64,6 +64,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     th { background: #f8f9fa; font-weight: 600; color: #555; }
     tr:hover { background: #f8f9fa; }
     .success { color: #28a745; }
+    .warning { color: #fd7e14; }
     .error { color: #dc3545; }
     .chart-container { position: relative; height: 300px; margin: 20px 0; }
     .status-badge {
@@ -218,6 +219,32 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     </div>
     {{/if}}
 
+    {{#if statusCodesArray.length}}
+    <div class="card">
+      <h2>HTTP Status Codes</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Description</th>
+            <th>Count</th>
+            <th>Percentage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each statusCodesArray}}
+          <tr>
+            <td class="{{statusCodeClass this.code}}">{{this.code}}</td>
+            <td>{{this.description}}</td>
+            <td>{{formatNumber this.count}}</td>
+            <td>{{formatPercent this.percentage}}</td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+    {{/if}}
+
     <div class="card">
       <h2>Virtual Users</h2>
       <div class="grid">
@@ -333,6 +360,13 @@ export class HtmlReporter {
     });
 
     Handlebars.registerHelper('gt', (a: number, b: number) => a > b);
+
+    Handlebars.registerHelper('statusCodeClass', (code: number) => {
+      if (code >= 200 && code < 300) return 'success';
+      if (code >= 400 && code < 500) return 'warning';
+      if (code >= 500) return 'error';
+      return '';
+    });
   }
 
   /**
@@ -346,9 +380,22 @@ export class HtmlReporter {
     const stepP50 = stepMetricsArray.map((s) => s.latency.median).join(', ');
     const stepP95 = stepMetricsArray.map((s) => s.latency.p95).join(', ');
 
+    // Prepare HTTP status codes array
+    const statusCodes = data.summary.statusCodes || {};
+    const totalCodes = Object.values(statusCodes).reduce((a, b) => a + b, 0);
+    const statusCodesArray = Object.entries(statusCodes)
+      .map(([code, count]) => ({
+        code: parseInt(code, 10),
+        count,
+        description: getHttpStatusDescription(parseInt(code, 10)),
+        percentage: totalCodes > 0 ? count / totalCodes : 0,
+      }))
+      .sort((a, b) => a.code - b.code);
+
     const templateData = {
       ...data,
       stepMetricsArray,
+      statusCodesArray,
       stepLabelsJson: stepLabels,
       stepP50Json: stepP50,
       stepP95Json: stepP95,
@@ -384,4 +431,33 @@ export async function saveHtmlReport(
 ): Promise<void> {
   const reporter = new HtmlReporter();
   await reporter.save(data, outputPath);
+}
+
+/**
+ * Get human-readable description for HTTP status code
+ */
+function getHttpStatusDescription(code: number): string {
+  const descriptions: Record<number, string> = {
+    200: 'OK',
+    201: 'Created',
+    202: 'Accepted',
+    204: 'No Content',
+    301: 'Moved Permanently',
+    302: 'Found (Redirect)',
+    304: 'Not Modified',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    422: 'Unprocessable Entity',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+  };
+  return descriptions[code] || `HTTP ${code}`;
 }

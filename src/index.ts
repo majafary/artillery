@@ -235,7 +235,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
     }
 
     // Progress tracking state
-    const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, vusers: 0, rps: 0 };
+    const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, statusCodes: {}, vusers: 0, rps: 0 };
     const startTime = Date.now();
     let currentPhase = '';
     let progressInterval: ReturnType<typeof setInterval> | null = null;
@@ -265,6 +265,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
         `${progressBar} | ${elapsedStr} / ${totalStr}`,
         '',
         chalk.gray(`   ${progressStats.main}`),
+        progressStats.statusLine ? chalk.cyan(`   HTTP: ${progressStats.statusLine}`) : '',
         progressStats.errorBreakdown ? chalk.red(`   ⚠️  ${progressStats.errorBreakdown}`) : '',
         currentPhase ? chalk.blue(`   Phase: ${currentPhase}`) : '',
         '',
@@ -304,6 +305,12 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
           } else {
             stats.errors = data.count as number;
           }
+          break;
+        }
+        case 'status-code': {
+          // Track HTTP status codes for visibility
+          const code = data.code as number;
+          stats.statusCodes[code] = data.count as number;
           break;
         }
         case 'complete':

@@ -402,6 +402,18 @@ export class Runner extends EventEmitter {
       }
     }
 
+    // HTTP status codes (e.g., "http.codes.401: .............. 150")
+    if (line.includes('http.codes.')) {
+      const match = line.match(/http\.codes\.(\d+):\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'status-code',
+          code: parseInt(match[1], 10),
+          count: parseInt(match[2], 10),
+        });
+      }
+    }
+
     // All VUs finished
     if (line.includes('All VUs finished')) {
       this.emit('progress', {
