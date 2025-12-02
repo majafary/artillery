@@ -100,11 +100,27 @@ export function formatProgressStats(stats: ProgressStats): {
   errorBreakdown?: string;
   statusLine?: string;
 } {
+  // Calculate HTTP errors from 4xx + 5xx status codes
+  let httpErrors = 0;
+  for (const [code, count] of Object.entries(stats.statusCodes)) {
+    const codeNum = parseInt(code, 10);
+    if (codeNum >= 400) {
+      httpErrors += count;
+    }
+  }
+
+  // Total errors = HTTP 4xx/5xx errors only
+  // Note: stats.errors contains connection errors (ECONNREFUSED, ETIMEDOUT)
+  // which are separate from HTTP status code errors
+  // However, connection errors mean no HTTP response, so no status code
+  // Therefore: totalErrors = httpErrors + stats.errors (no overlap)
+  const totalErrors = stats.errors + httpErrors;
+
   const errorRate = stats.requests > 0
-    ? ((stats.errors / stats.requests) * 100).toFixed(1)
+    ? ((totalErrors / stats.requests) * 100).toFixed(1)
     : '0.0';
 
-  const main = `Requests: ${formatNumber(stats.requests)} (${stats.rps}/s)  |  Errors: ${formatNumber(stats.errors)} (${errorRate}%)  |  VUs: ${stats.vusers}`;
+  const main = `Requests: ${formatNumber(stats.requests)} (${stats.rps}/s)  |  Errors: ${formatNumber(totalErrors)} (${errorRate}%)  |  VUs: ${stats.vusers}`;
 
   // Build error type breakdown if errors exist
   const errorEntries = Object.entries(stats.errorTypes);
