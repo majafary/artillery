@@ -128,7 +128,8 @@ export class Runner extends EventEmitter {
 
       // Write generated files
       const scriptPath = join(this.tempDir, 'test.yml');
-      const processorPath = join(this.tempDir, 'processor.js');
+      // Use .cjs extension so Node treats it as CommonJS (project uses "type": "module")
+      const processorPath = join(this.tempDir, 'processor.cjs');
 
       // Get absolute path to the processor module (in same dir as runner)
       const processorModulePath = join(__dirname, 'processor.js');

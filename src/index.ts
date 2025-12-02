@@ -354,8 +354,9 @@ async function generateCommand(journeyPath: string, options: Record<string, unkn
       console.log(chalk.green(`✓ Script saved to: ${options.output}`));
 
       // Get absolute path to the processor module
+      // Use .cjs extension so Node treats it as CommonJS (project uses "type": "module")
       const processorModulePath = join(__dirname, 'artillery', 'processor.js');
-      const processorPath = join(dirname(options.output as string), 'processor.js');
+      const processorPath = join(dirname(options.output as string), 'processor.cjs');
       await writeFile(processorPath, generator.generateProcessor(processorModulePath));
       console.log(chalk.green(`✓ Processor saved to: ${processorPath}`));
     } else {

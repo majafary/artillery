@@ -120,7 +120,7 @@ export class ScriptGenerator {
     const config: ArtilleryConfig = {
       target: this.journey.baseUrl || this.environment.target.baseUrl,
       phases: this.buildPhases(),
-      processor: './processor.js',
+      processor: './processor.cjs',
       plugins: {
         'shield-artillery': {
           enabled: true,
