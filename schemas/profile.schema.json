@@ -37,6 +37,10 @@
           "maximum": 100,
           "description": "Percentage weight for this profile (0-100)"
         },
+        "journey": {
+          "type": "string",
+          "description": "Path to journey file for this profile (overrides CLI journey)"
+        },
         "dataSource": {
           "type": "string",
           "description": "Path to CSV file with user data"

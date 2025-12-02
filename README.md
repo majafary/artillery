@@ -20,6 +20,7 @@ Define complex API orchestration flows as declarative JSON configurations. No co
 
 - [Architecture Overview](#architecture-overview)
 - [Core Concepts](#core-concepts)
+- [Understanding Variables](#understanding-variables)
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -129,6 +130,251 @@ An **environment** defines where to run tests (target URL), how much load to gen
   "thresholds": { "p95ResponseTime": 500 }
 }
 ```
+
+---
+
+## Understanding Variables
+
+Variables are placeholders (`{{variableName}}`) that get replaced with actual values at runtime. There are **three sources** of variables:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                       WHERE VARIABLES COME FROM                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. USER DATA (from CSV)              2. EXTRACTED FROM RESPONSES   │
+│     ┌─────────────────────┐              ┌─────────────────────┐    │
+│     │ users.csv:          │              │ API Response:       │    │
+│     │ email,password      │              │ {"token":"abc123"}  │    │
+│     │ john@x.com,pass123  │              └──────────┬──────────┘    │
+│     └──────────┬──────────┘                         │               │
+│                │                                    │ extract:      │
+│                │                                    │ path: $.token │
+│                │                                    │ as: authToken │
+│                ▼                                    ▼               │
+│     ┌───────────────────────────────────────────────────────────┐   │
+│     │                   VARIABLE CONTEXT                         │   │
+│     │                                                            │   │
+│     │   user.email = "john@x.com"      ◄── from CSV column      │   │
+│     │   user.password = "pass123"      ◄── from CSV column      │   │
+│     │   authToken = "abc123"           ◄── extracted from API   │   │
+│     │   $uuid = "550e8400-e29b..."     ◄── built-in generator   │   │
+│     │                                                            │   │
+│     └───────────────────────────────────────────────────────────┘   │
+│                               │                                      │
+│                               ▼                                      │
+│     ┌───────────────────────────────────────────────────────────┐   │
+│     │                    NEXT REQUEST                            │   │
+│     │   POST /api/profile                                        │   │
+│     │   Authorization: Bearer {{authToken}}                      │   │
+│     │   Body: {"email": "{{user.email}}"}                        │   │
+│     └───────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  3. BUILT-IN GENERATORS                                             │
+│     {{$uuid}}         → "550e8400-e29b-41d4-a716-446655440000"     │
+│     {{$timestamp}}    → 1699900000000                               │
+│     {{$isoTimestamp}} → "2024-01-15T10:30:00.000Z"                  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Complete Example: CSV → Profile → Journey → Extract
+
+**Step 1: Create a CSV file with test user data**
+
+```csv
+email,password
+john@example.com,SecurePass123!
+jane@example.com,SecurePass456!
+```
+
+Each column header becomes accessible as `{{user.columnName}}`.
+
+**Step 2: Profile references the CSV file**
+
+```json
+{
+  "id": "test-users",
+  "profiles": [{
+    "name": "standard-users",
+    "weight": 100,
+    "dataSource": "./data/users.csv"
+  }]
+}
+```
+
+When a virtual user starts, they get assigned a row from the CSV. That row's data is available as `{{user.email}}`, `{{user.password}}`, etc.
+
+**Step 3: Journey uses user data and extracts response values**
+
+```json
+{
+  "id": "login",
+  "name": "Login Step",
+  "request": {
+    "method": "POST",
+    "url": "/v1/login",
+    "json": {
+      "username": "{{user.email}}",
+      "password": "{{user.password}}"
+    }
+  },
+  "extract": [
+    {
+      "path": "$.access_token",
+      "as": "authToken"
+    }
+  ]
+}
+```
+
+At runtime:
+- `{{user.email}}` → replaced with `"john@example.com"` (from CSV)
+- `{{user.password}}` → replaced with `"SecurePass123!"` (from CSV)
+- After the response, `$.access_token` is extracted and stored as `authToken`
+
+**Step 4: Subsequent steps use the extracted value**
+
+```json
+{
+  "id": "get-profile",
+  "name": "Get User Profile",
+  "request": {
+    "method": "GET",
+    "url": "/v1/profile",
+    "headers": {
+      "Authorization": "Bearer {{authToken}}"
+    }
+  }
+}
+```
+
+`{{authToken}}` → replaced with the token extracted from the login response.
+
+### What Does `extract` Do?
+
+`extract` pulls values from an API response and stores them as variables for use in subsequent steps.
+
+```
+API Response:                          Extract Config:
+{                                      [
+  "access_token": "eyJhbGciOi...",       {
+  "user": {                                "path": "$.access_token",
+    "id": 12345,                           "as": "authToken"
+    "name": "John"                       },
+  },                                     {
+  "otp_methods": [                         "path": "$.user.id",
+    { "option_id": "sms-1" },              "as": "userId"
+    { "option_id": "email-2" }           },
+  ]                                      {
+}                                          "path": "$.otp_methods[0].option_id",
+                                           "as": "otpOptionId"
+                                         }
+                                       ]
+
+Result (stored in variable context):
+  authToken = "eyJhbGciOi..."
+  userId = 12345
+  otpOptionId = "sms-1"
+```
+
+| Extract Property | Description | Example |
+|------------------|-------------|---------|
+| `path` | JSONPath expression to locate the value | `$.data.id`, `$.items[0].name`, `$.user.profile.email` |
+| `as` | Variable name to store the extracted value | `authToken`, `userId`, `transactionId` |
+| `type` | Extraction method (default: `json`) | `json`, `header`, `regex` |
+| `default` | Fallback value if extraction fails | `null`, `"unknown"`, `0` |
+
+### JSONPath Quick Reference
+
+| JSONPath | Meaning | Example Response | Result |
+|----------|---------|------------------|--------|
+| `$.token` | Root-level field | `{"token": "abc"}` | `"abc"` |
+| `$.user.id` | Nested field | `{"user": {"id": 123}}` | `123` |
+| `$.items[0]` | First array element | `{"items": ["a", "b"]}` | `"a"` |
+| `$.items[0].id` | Field in first array element | `{"items": [{"id": 1}]}` | `1` |
+| `$.data[*].name` | All names in array | `{"data": [{"name": "A"}, {"name": "B"}]}` | `["A", "B"]` |
+
+### Profile Variables & Generators
+
+In addition to CSV data and extracted values, you can define **static variables** and **dynamic generators** in your profile configuration.
+
+#### Static Variables vs Dynamic Generators
+
+| Aspect | Static Variables | Generators |
+|--------|-----------------|------------|
+| **When evaluated** | Once at profile load | Fresh value per virtual user/request |
+| **Use case** | User type flags, static config | Dynamic IDs, timestamps, random values |
+| **Example** | `"requiresMfa": true` | `"deviceId": { "type": "uuid" }` |
+
+#### Generator Types Reference
+
+| Type | Output | Use Case | Example Config |
+|------|--------|----------|----------------|
+| `uuid` | UUID v4 string | Unique correlation IDs, device IDs | `{ "type": "uuid" }` |
+| `timestamp` | Milliseconds since epoch | Cache busting, timestamps | `{ "type": "timestamp" }` |
+| `random` | Random number or string | Test data variation | `{ "type": "random", "options": { "min": 1, "max": 100 } }` |
+| `sequence` | Incrementing integer | Sequential IDs | `{ "type": "sequence", "options": { "start": 1000, "step": 1 } }` |
+| `faker` | Fake data (names, emails, etc.) | Realistic test data | `{ "type": "faker", "options": { "method": "person.firstName" } }` |
+
+#### Profile Configuration Example
+
+```json
+{
+  "profiles": [
+    {
+      "name": "mfa-required-users",
+      "weight": 15,
+      "journey": "./otp-mfa.journey.json",
+      "dataSource": "./data/mfa-users.csv",
+      "variables": {
+        "hasBoundDevice": false,
+        "requiresMfa": true
+      },
+      "generators": {
+        "deviceId": { "type": "uuid" },
+        "requestTimestamp": { "type": "timestamp" }
+      }
+    }
+  ]
+}
+```
+
+At runtime, each virtual user gets:
+- `{{user.email}}`, `{{user.password}}` from CSV
+- `{{hasBoundDevice}}` = `false`, `{{requiresMfa}}` = `true` from static variables
+- `{{deviceId}}` = fresh UUID, `{{requestTimestamp}}` = current timestamp from generators
+
+### Journey-per-Profile
+
+Each profile can optionally specify its own journey file. This enables different user types to run completely different API flows while sharing the same load test.
+
+```json
+{
+  "profiles": [
+    {
+      "name": "normal-users",
+      "weight": 60,
+      "journey": "./simple-login.journey.json",
+      "dataSource": "./data/normal-users.csv"
+    },
+    {
+      "name": "mfa-required-users",
+      "weight": 15,
+      "journey": "./otp-mfa.journey.json",
+      "dataSource": "./data/mfa-users.csv"
+    }
+  ]
+}
+```
+
+**When to use journey-per-profile:**
+- Different user types have fundamentally different flows (e.g., MFA vs non-MFA)
+- You want to simulate realistic traffic distribution across different use cases
+
+**When to use response-based branching instead:**
+- The API response determines the path (stateful behavior)
+- Same user might get different responses depending on server state (e.g., device already bound)
 
 ---
 

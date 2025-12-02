@@ -12,6 +12,7 @@ export interface ProfileConfig {
 export interface Profile {
   name: string;
   weight: number;
+  journey?: string; // Path to journey file for this profile (overrides CLI journey)
   dataSource?: string;
   data?: UserData[];
   variables?: Record<string, unknown>;

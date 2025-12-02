@@ -79,15 +79,18 @@ export class ScriptGenerator {
   private profiles?: ProfileConfig;
   private environment: EnvironmentConfig;
   private flowEngine: FlowEngine;
+  private profileJourneys: Map<string, Journey>;
 
   constructor(
     journey: Journey,
     environment: EnvironmentConfig,
-    profiles?: ProfileConfig
+    profiles?: ProfileConfig,
+    profileJourneys?: Map<string, Journey>
   ) {
     this.journey = journey;
     this.environment = environment;
     this.profiles = profiles;
+    this.profileJourneys = profileJourneys || new Map();
     this.flowEngine = new FlowEngine(journey);
   }
 
@@ -179,13 +182,18 @@ export class ScriptGenerator {
   private buildScenarios(): ArtilleryScenario[] {
     if (this.profiles && this.profiles.profiles.length > 0) {
       // Create weighted scenario per profile
-      return this.profiles.profiles.map((profile) => ({
-        name: `${this.journey.name} - ${profile.name}`,
-        weight: profile.weight,
-        beforeScenario: 'setupUser',
-        afterScenario: 'cleanup',
-        flow: this.buildFlow(),
-      }));
+      return this.profiles.profiles.map((profile) => {
+        // Use profile-specific journey if available, otherwise use default
+        const profileJourney = this.profileJourneys.get(profile.name) || this.journey;
+
+        return {
+          name: `${profileJourney.name} - ${profile.name}`,
+          weight: profile.weight,
+          beforeScenario: 'setupUser',
+          afterScenario: 'cleanup',
+          flow: this.buildFlowForJourney(profileJourney),
+        };
+      });
     }
 
     // Single default scenario
@@ -194,7 +202,7 @@ export class ScriptGenerator {
         name: this.journey.name,
         beforeScenario: 'setupUser',
         afterScenario: 'cleanup',
-        flow: this.buildFlow(),
+        flow: this.buildFlowForJourney(this.journey),
       },
     ];
   }
@@ -202,15 +210,15 @@ export class ScriptGenerator {
   /**
    * Build flow array from journey steps
    */
-  private buildFlow(): ArtilleryFlowItem[] {
+  private buildFlowForJourney(journey: Journey): ArtilleryFlowItem[] {
     const flow: ArtilleryFlowItem[] = [];
 
-    for (const step of this.journey.steps) {
+    for (const step of journey.steps) {
       // Add the request step with conditional execution
       flow.push(this.buildStepRequest(step));
 
       // Add think time after step if configured
-      const thinkTime = step.thinkTime || this.journey.defaults?.thinkTime;
+      const thinkTime = step.thinkTime || journey.defaults?.thinkTime;
       if (thinkTime) {
         flow.push(this.buildThinkTime(thinkTime));
       }
@@ -310,7 +318,22 @@ export class ScriptGenerator {
    * Generate processor file content
    */
   generateProcessor(): string {
-    const stepConditions = this.journey.steps.map((step) => {
+    // Collect all unique steps from all journeys (default + profile-specific)
+    const allSteps = new Map<string, Step>();
+
+    // Add steps from default journey
+    for (const step of this.journey.steps) {
+      allSteps.set(step.id, step);
+    }
+
+    // Add steps from profile-specific journeys
+    for (const [, profileJourney] of this.profileJourneys) {
+      for (const step of profileJourney.steps) {
+        allSteps.set(step.id, step);
+      }
+    }
+
+    const stepConditions = Array.from(allSteps.values()).map((step) => {
       return `
 // Condition for step: ${step.id}
 module.exports.shouldExecuteStep_${step.id} = function(context) {
@@ -383,8 +406,9 @@ ${stepConditions.join('\n')}
 export function generateScript(
   journey: Journey,
   environment: EnvironmentConfig,
-  profiles?: ProfileConfig
+  profiles?: ProfileConfig,
+  profileJourneys?: Map<string, Journey>
 ): GeneratedScript {
-  const generator = new ScriptGenerator(journey, environment, profiles);
+  const generator = new ScriptGenerator(journey, environment, profiles, profileJourneys);
   return generator.generate();
 }

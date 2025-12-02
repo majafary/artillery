@@ -18,7 +18,7 @@ import { Runner } from './artillery/runner.js';
 import { buildReportData } from './reporters/report-data-builder.js';
 import { saveMarkdownReport } from './reporters/markdown-reporter.js';
 import { saveHtmlReport } from './reporters/html-reporter.js';
-import type { EnvironmentConfig, CliOptions } from './types/index.js';
+import type { EnvironmentConfig, CliOptions, Journey } from './types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -122,6 +122,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
 
     // Load profiles if specified
     let profileConfig;
+    const profileJourneys = new Map<string, Journey>();
     if (options.profiles) {
       console.log(chalk.gray(`Loading profiles: ${options.profiles}`));
       const distributor = await loadProfileDistributor(
@@ -130,6 +131,22 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       );
       profileConfig = (distributor as any).config;
       console.log(chalk.green(`✓ Loaded ${profileConfig.profiles.length} profiles`));
+
+      // Load profile-specific journeys
+      const profileBasePath = dirname(options.profiles as string);
+      for (const profile of profileConfig.profiles) {
+        if (profile.journey) {
+          const profileJourneyPath = join(profileBasePath, profile.journey);
+          console.log(chalk.gray(`  Loading journey for ${profile.name}: ${profile.journey}`));
+          const { journey: profileJourney } = await loadJourney(profileJourneyPath, {
+            environment: envConfig,
+          });
+          profileJourneys.set(profile.name, profileJourney);
+        }
+      }
+      if (profileJourneys.size > 0) {
+        console.log(chalk.green(`✓ Loaded ${profileJourneys.size} profile-specific journeys`));
+      }
     }
 
     // Build config
@@ -152,7 +169,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
 
     // Generate script
     console.log(chalk.gray('\nGenerating Artillery script...'));
-    const generator = new ScriptGenerator(journey, envConfig, profileConfig);
+    const generator = new ScriptGenerator(journey, envConfig, profileConfig, profileJourneys);
     const validation = generator.validate();
 
     if (!validation.valid) {
@@ -306,15 +323,28 @@ async function generateCommand(journeyPath: string, options: Record<string, unkn
     const { journey } = await loadJourney(journeyPath, { environment: envConfig });
 
     let profileConfig;
+    const profileJourneys = new Map<string, Journey>();
     if (options.profiles) {
       const distributor = await loadProfileDistributor(
         options.profiles as string,
         dirname(journeyPath)
       );
       profileConfig = (distributor as any).config;
+
+      // Load profile-specific journeys
+      const profileBasePath = dirname(options.profiles as string);
+      for (const profile of profileConfig.profiles) {
+        if (profile.journey) {
+          const profileJourneyPath = join(profileBasePath, profile.journey);
+          const { journey: profileJourney } = await loadJourney(profileJourneyPath, {
+            environment: envConfig,
+          });
+          profileJourneys.set(profile.name, profileJourney);
+        }
+      }
     }
 
-    const generator = new ScriptGenerator(journey, envConfig, profileConfig);
+    const generator = new ScriptGenerator(journey, envConfig, profileConfig, profileJourneys);
     const script = generator.generate();
 
     if (options.output) {

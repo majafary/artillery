@@ -3,19 +3,33 @@
   "name": "CIAM Test User Distribution",
   "profiles": [
     {
+      "name": "normal-users",
+      "weight": 60,
+      "journey": "./simple-login.journey.json",
+      "dataSource": "./data/normal-users.csv",
+      "variables": {
+        "hasBoundDevice": false,
+        "requiresMfa": false
+      }
+    },
+    {
       "name": "bound-device-users",
-      "weight": 50,
+      "weight": 25,
+      "journey": "./simple-login.journey.json",
       "dataSource": "./data/bound-users.csv",
       "variables": {
-        "hasBoundDevice": true
+        "hasBoundDevice": true,
+        "requiresMfa": false
       }
     },
     {
       "name": "mfa-required-users",
-      "weight": 50,
+      "weight": 15,
+      "journey": "./otp-mfa.journey.json",
       "dataSource": "./data/mfa-users.csv",
       "variables": {
-        "hasBoundDevice": false
+        "hasBoundDevice": false,
+        "requiresMfa": true
       },
       "generators": {
         "deviceId": {
