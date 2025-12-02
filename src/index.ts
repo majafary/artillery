@@ -61,6 +61,7 @@ async function main() {
     .option('--dry-run', 'Generate Artillery script without running')
     .option('-v, --verbose', 'Verbose output')
     .option('-q, --quiet', 'Minimal output')
+    .option('--debug', 'Log HTTP request/response details to debug file')
     .action(async (journeyPath: string, options) => {
       await runCommand(journeyPath, options);
     });
@@ -226,7 +227,12 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       outputDir: options.output as string,
       verbose: options.verbose as boolean,
       quiet: options.quiet as boolean,
+      debug: options.debug as boolean,
     });
+
+    if (options.debug) {
+      console.log(chalk.yellow('   Debug mode enabled - HTTP details will be logged to debug-*.log\n'));
+    }
 
     // Progress tracking state
     const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, vusers: 0, rps: 0 };

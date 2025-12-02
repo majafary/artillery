@@ -33,6 +33,8 @@ export interface RunnerOptions {
   quiet?: boolean;
   /** Dry run (generate but don't execute) */
   dryRun?: boolean;
+  /** Debug mode - log HTTP request/response details */
+  debug?: boolean;
 }
 
 export interface RunResult {
@@ -77,6 +79,7 @@ export class Runner extends EventEmitter {
       verbose: false,
       quiet: false,
       dryRun: false,
+      debug: false,
       ...options,
     };
   }
@@ -134,8 +137,13 @@ export class Runner extends EventEmitter {
       // Get absolute path to the processor module (in same dir as runner)
       const processorModulePath = join(__dirname, 'processor.js');
 
+      // Generate debug log path if debug mode is enabled
+      const debugLogPath = this.options.debug
+        ? resolve(this.options.outputDir!, `debug-${Date.now()}.log`)
+        : undefined;
+
       await writeFile(scriptPath, script.yaml);
-      await writeFile(processorPath, generator.generateProcessor(processorModulePath));
+      await writeFile(processorPath, generator.generateProcessor(processorModulePath, debugLogPath));
 
       this.emit('generated', { scriptPath, processorPath });
 

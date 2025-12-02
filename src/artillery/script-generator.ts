@@ -317,7 +317,7 @@ export class ScriptGenerator {
   /**
    * Generate processor file content
    */
-  generateProcessor(processorModulePath: string): string {
+  generateProcessor(processorModulePath: string, debugLogPath?: string): string {
     // Collect all unique steps from all journeys (default + profile-specific)
     const allSteps = new Map<string, Step>();
 
@@ -343,6 +343,48 @@ module.exports.shouldExecuteStep_${step.id} = function(context) {
 
     // Escape backslashes for Windows paths
     const escapedPath = processorModulePath.replace(/\\/g, '\\\\');
+    const escapedDebugPath = debugLogPath ? debugLogPath.replace(/\\/g, '\\\\') : '';
+
+    // Debug logging setup
+    const debugSetup = debugLogPath ? `
+// Debug logging setup
+const fs = require('fs');
+const DEBUG_LOG_PATH = '${escapedDebugPath}';
+
+// Initialize debug log file
+fs.writeFileSync(DEBUG_LOG_PATH, '=== Shield Artillery Debug Log ===\\n' +
+  'Started: ' + new Date().toISOString() + '\\n\\n');
+
+// Wrap afterResponse to add debug logging
+const originalAfterResponse = processor.afterResponse;
+module.exports.afterResponse = function(requestParams, response, context, ee, next) {
+  // Log request/response details
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    step: requestParams.__stepId || 'unknown',
+    request: {
+      method: requestParams.method,
+      url: requestParams.url,
+      headers: requestParams.headers,
+      body: requestParams.json || requestParams.body
+    },
+    response: {
+      statusCode: response.statusCode,
+      headers: response.headers,
+      body: typeof response.body === 'string' ? response.body.substring(0, 2000) : response.body,
+      responseTime: response.timings?.phases?.total
+    }
+  };
+
+  fs.appendFileSync(DEBUG_LOG_PATH,
+    '--- Request/Response ---\\n' +
+    JSON.stringify(logEntry, null, 2) + '\\n\\n'
+  );
+
+  // Call original handler
+  return originalAfterResponse(requestParams, response, context, ee, next);
+};
+` : '';
 
     return `/**
  * Generated Artillery Processor
@@ -350,12 +392,12 @@ module.exports.shouldExecuteStep_${step.id} = function(context) {
  */
 
 const processor = require('${escapedPath}');
-
+${debugSetup}
 // Re-export standard processor functions
 module.exports.initialize = processor.initialize;
 module.exports.setupUser = processor.setupUser;
 module.exports.beforeRequest = processor.beforeRequest;
-module.exports.afterResponse = processor.afterResponse;
+${debugLogPath ? '// afterResponse is wrapped above for debug logging' : 'module.exports.afterResponse = processor.afterResponse;'}
 module.exports.think = processor.think;
 module.exports.cleanup = processor.cleanup;
 
