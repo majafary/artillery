@@ -6,31 +6,19 @@
       "name": "normal-users",
       "weight": 60,
       "journey": "./simple-login.journey.json",
-      "dataSource": "./data/normal-users.csv",
-      "variables": {
-        "hasBoundDevice": false,
-        "requiresMfa": false
-      }
+      "dataSource": "./data/normal-users.csv"
     },
     {
       "name": "bound-device-users",
       "weight": 25,
       "journey": "./simple-login.journey.json",
-      "dataSource": "./data/bound-users.csv",
-      "variables": {
-        "hasBoundDevice": true,
-        "requiresMfa": false
-      }
+      "dataSource": "./data/bound-users.csv"
     },
     {
       "name": "mfa-required-users",
       "weight": 15,
       "journey": "./otp-mfa.journey.json",
       "dataSource": "./data/mfa-users.csv",
-      "variables": {
-        "hasBoundDevice": false,
-        "requiresMfa": true
-      },
       "generators": {
         "deviceId": {
           "type": "uuid"
