@@ -1,0 +1,179 @@
+{
+  "id": "ciam-login-mfa",
+  "name": "CIAM Login with MFA Flow",
+  "description": "Customer authentication journey with conditional MFA handling based on user profile",
+  "version": "1.0.0",
+  "baseUrl": "{{env.API_BASE_URL}}",
+  "defaults": {
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Client-Id": "{{env.CLIENT_ID}}",
+      "X-Correlation-Id": "{{$uuid}}"
+    },
+    "timeout": 10000,
+    "thinkTime": {
+      "min": 1,
+      "max": 3
+    }
+  },
+  "steps": [
+    {
+      "id": "login",
+      "name": "Initial Login Request",
+      "request": {
+        "method": "POST",
+        "url": "/v1/login",
+        "json": {
+          "username": "{{user.email}}",
+          "password": "{{user.password}}"
+        },
+        "expect": {
+          "statusCode": [200, 201, 202]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.transaction_id",
+          "as": "transactionId"
+        },
+        {
+          "path": "$.response_type_code",
+          "as": "responseTypeCode"
+        },
+        {
+          "path": "$.access_token",
+          "as": "accessToken",
+          "default": null
+        },
+        {
+          "path": "$.otp_methods[0].option_id",
+          "as": "optionId"
+        },
+        {
+          "path": "$.otp_methods[0].value",
+          "as": "otpMethodValue"
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "field": "$.response_type_code",
+            "eq": "MFA_REQUIRED"
+          },
+          "goto": "mfa-initiate"
+        },
+        {
+          "condition": {
+            "field": "$.response_type_code",
+            "eq": "SUCCESS"
+          },
+          "goto": "device-bind"
+        }
+      ]
+    },
+    {
+      "id": "mfa-initiate",
+      "name": "Initiate MFA Challenge",
+      "request": {
+        "method": "POST",
+        "url": "/v1/mfa/initiate",
+        "json": {
+          "transaction_id": "{{transactionId}}",
+          "option_id": "{{optionId}}",
+          "method": "SMS"
+        },
+        "expect": {
+          "statusCode": [200, 202]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.transaction_id",
+          "as": "transactionId"
+        }
+      ],
+      "thinkTime": {
+        "min": 2,
+        "max": 5
+      },
+      "onSuccess": "get-otp"
+    },
+    {
+      "id": "get-otp",
+      "name": "Fetch OTP (Test Environment Helper)",
+      "request": {
+        "method": "GET",
+        "url": "/v1/mfa/transactions/{{transactionId}}/otp",
+        "headers": {
+          "X-Test-Helper": "true"
+        },
+        "expect": {
+          "statusCode": 200
+        }
+      },
+      "extract": [
+        {
+          "path": "$.otp_code",
+          "as": "otpCode"
+        }
+      ],
+      "thinkTime": {
+        "min": 5,
+        "max": 15
+      },
+      "onSuccess": "mfa-verify"
+    },
+    {
+      "id": "mfa-verify",
+      "name": "Verify MFA Code",
+      "request": {
+        "method": "POST",
+        "url": "/v1/mfa/verify",
+        "json": {
+          "transaction_id": "{{transactionId}}",
+          "otp_code": "{{otpCode}}"
+        },
+        "expect": {
+          "statusCode": 200,
+          "hasFields": ["$.access_token"]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.access_token",
+          "as": "accessToken"
+        },
+        {
+          "path": "$.refresh_token",
+          "as": "refreshToken"
+        }
+      ],
+      "onSuccess": "device-bind"
+    },
+    {
+      "id": "device-bind",
+      "name": "Bind Device",
+      "request": {
+        "method": "POST",
+        "url": "/v1/device/bind",
+        "headers": {
+          "Authorization": "Bearer {{accessToken}}"
+        },
+        "json": {
+          "device_id": "{{deviceId}}",
+          "device_name": "{{deviceName}}",
+          "platform": "ios"
+        },
+        "expect": {
+          "statusCode": [200, 201]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.device_token",
+          "as": "deviceToken"
+        }
+      ]
+    }
+  ]
+}

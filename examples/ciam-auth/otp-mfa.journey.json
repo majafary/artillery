@@ -1,0 +1,153 @@
+{
+  "id": "otp-mfa-flow",
+  "name": "OTP MFA with Device Bind Decline",
+  "description": "Full MFA flow: login -> initiate MFA -> fetch test OTP -> verify -> decline device binding",
+  "version": "1.0.0",
+  "defaults": {
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Correlation-Id": "{{$uuid}}"
+    },
+    "timeout": 10000,
+    "thinkTime": {
+      "min": 1,
+      "max": 3
+    }
+  },
+  "steps": [
+    {
+      "id": "login",
+      "name": "Initial Login Request",
+      "request": {
+        "method": "POST",
+        "url": "/v1/login",
+        "json": {
+          "username": "{{user.email}}",
+          "password": "{{user.password}}"
+        },
+        "expect": {
+          "statusCode": [200, 202]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.transaction_id",
+          "as": "transactionId"
+        },
+        {
+          "path": "$.response_type_code",
+          "as": "responseCode"
+        },
+        {
+          "path": "$.otp_methods[0].option_id",
+          "as": "optionId"
+        },
+        {
+          "path": "$.otp_methods[0].value",
+          "as": "otpMethodValue"
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "field": "$.response_type_code",
+            "eq": "MFA_REQUIRED"
+          },
+          "goto": "mfa-initiate"
+        }
+      ]
+    },
+    {
+      "id": "mfa-initiate",
+      "name": "Initiate MFA Challenge",
+      "request": {
+        "method": "POST",
+        "url": "/v1/mfa/initiate",
+        "json": {
+          "transaction_id": "{{transactionId}}",
+          "option_id": "{{optionId}}",
+          "delivery_method": "SMS"
+        },
+        "expect": {
+          "statusCode": [200, 202]
+        }
+      },
+      "extract": [
+        {
+          "path": "$.transaction_id",
+          "as": "transactionId"
+        }
+      ],
+      "thinkTime": {
+        "min": 2,
+        "max": 5
+      },
+      "onSuccess": "fetch-otp"
+    },
+    {
+      "id": "fetch-otp",
+      "name": "Fetch Test OTP",
+      "request": {
+        "method": "GET",
+        "url": "/v1/mfa/transactions/{{transactionId}}/otp",
+        "expect": {
+          "statusCode": 200
+        }
+      },
+      "extract": [
+        {
+          "path": "$.otp",
+          "as": "otpCode"
+        }
+      ],
+      "thinkTime": {
+        "min": 1,
+        "max": 3
+      },
+      "onSuccess": "mfa-verify"
+    },
+    {
+      "id": "mfa-verify",
+      "name": "Verify MFA Code",
+      "request": {
+        "method": "POST",
+        "url": "/v1/mfa/verify",
+        "json": {
+          "transaction_id": "{{transactionId}}",
+          "otp": "{{otpCode}}"
+        },
+        "expect": {
+          "statusCode": 200
+        }
+      },
+      "extract": [
+        {
+          "path": "$.access_token",
+          "as": "accessToken"
+        },
+        {
+          "path": "$.refresh_token",
+          "as": "refreshToken"
+        }
+      ],
+      "onSuccess": "device-bind-decline"
+    },
+    {
+      "id": "device-bind-decline",
+      "name": "Decline Device Binding",
+      "request": {
+        "method": "POST",
+        "url": "/v1/device/bind",
+        "headers": {
+          "Authorization": "Bearer {{accessToken}}"
+        },
+        "json": {
+          "bind_device": false
+        },
+        "expect": {
+          "statusCode": [200, 204]
+        }
+      }
+    }
+  ]
+}

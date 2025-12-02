@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shield-artillery/environment.schema.json",
+  "title": "Environment Configuration",
+  "description": "Environment-specific settings for load testing",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Environment name (e.g., dev, staging, production)"
+    },
+    "variables": {
+      "type": "object",
+      "description": "Environment variables accessible via {{env.VAR}}",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for API requests"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1000,
+          "default": 10000,
+          "description": "Default request timeout in milliseconds"
+        }
+      },
+      "required": ["baseUrl"]
+    },
+    "load": {
+      "type": "object",
+      "properties": {
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/phase"
+          },
+          "description": "Load test phases"
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "properties": {
+        "p50ResponseTime": {
+          "type": "integer",
+          "description": "50th percentile response time threshold (ms)"
+        },
+        "p95ResponseTime": {
+          "type": "integer",
+          "description": "95th percentile response time threshold (ms)"
+        },
+        "p99ResponseTime": {
+          "type": "integer",
+          "description": "99th percentile response time threshold (ms)"
+        },
+        "maxResponseTime": {
+          "type": "integer",
+          "description": "Maximum response time threshold (ms)"
+        },
+        "maxErrorRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Maximum error rate (0-1, e.g., 0.01 = 1%)"
+        },
+        "minThroughput": {
+          "type": "number",
+          "description": "Minimum requests per second"
+        }
+      }
+    },
+    "http": {
+      "type": "object",
+      "properties": {
+        "pool": {
+          "type": "integer",
+          "default": 10,
+          "description": "HTTP connection pool size"
+        },
+        "timeout": {
+          "type": "integer",
+          "default": 10000,
+          "description": "HTTP timeout in milliseconds"
+        },
+        "maxRedirects": {
+          "type": "integer",
+          "default": 3,
+          "description": "Maximum number of redirects to follow"
+        }
+      }
+    }
+  },
+  "required": ["name", "target"],
+  "definitions": {
+    "phase": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Phase name"
+        },
+        "duration": {
+          "type": "string",
+          "pattern": "^\\d+[smh]$",
+          "description": "Phase duration (e.g., '30s', '5m', '1h')"
+        },
+        "arrivalRate": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "New virtual users per second"
+        },
+        "rampTo": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ramp arrival rate to this value"
+        },
+        "maxVusers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum concurrent virtual users"
+        },
+        "pause": {
+          "type": "string",
+          "pattern": "^\\d+[smh]$",
+          "description": "Pause before this phase"
+        }
+      },
+      "required": ["duration"]
+    }
+  }
+}

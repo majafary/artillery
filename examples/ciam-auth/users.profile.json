@@ -1,0 +1,27 @@
+{
+  "id": "ciam-test-users",
+  "name": "CIAM Test User Distribution",
+  "profiles": [
+    {
+      "name": "bound-device-users",
+      "weight": 50,
+      "dataSource": "./data/bound-users.csv",
+      "variables": {
+        "hasBoundDevice": true
+      }
+    },
+    {
+      "name": "mfa-required-users",
+      "weight": 50,
+      "dataSource": "./data/mfa-users.csv",
+      "variables": {
+        "hasBoundDevice": false
+      },
+      "generators": {
+        "deviceId": {
+          "type": "uuid"
+        }
+      }
+    }
+  ]
+}

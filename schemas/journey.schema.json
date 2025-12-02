@@ -1,0 +1,298 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shield-artillery/journey.schema.json",
+  "title": "Journey Definition",
+  "description": "Defines an API journey with steps, branching, and data extraction",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique journey identifier",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable journey name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Journey description"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "default": "1.0.0"
+    },
+    "baseUrl": {
+      "type": "string",
+      "description": "Base URL for all requests (supports {{env.VAR}} syntax)"
+    },
+    "defaults": {
+      "$ref": "#/definitions/defaults"
+    },
+    "variables": {
+      "type": "object",
+      "description": "Initial variables available to all steps",
+      "additionalProperties": true
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/step"
+      },
+      "minItems": 1
+    }
+  },
+  "required": ["id", "name", "steps"],
+  "definitions": {
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1000,
+          "default": 10000
+        },
+        "thinkTime": {
+          "$ref": "#/definitions/thinkTime"
+        }
+      }
+    },
+    "thinkTime": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": ["min", "max"]
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Step identifier for branching references",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable step name"
+        },
+        "request": {
+          "$ref": "#/definitions/request"
+        },
+        "extract": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/extraction"
+          }
+        },
+        "thinkTime": {
+          "$ref": "#/definitions/thinkTime"
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/branch"
+          }
+        },
+        "onSuccess": {
+          "type": "string",
+          "description": "Step ID to go to on success (when no branch matches)"
+        },
+        "onFailure": {
+          "type": "string",
+          "description": "Step ID to go to on failure"
+        }
+      },
+      "required": ["id", "request"]
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+        },
+        "url": {
+          "type": "string",
+          "description": "Request URL (relative to baseUrl, supports {{var}} interpolation)"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "json": {
+          "type": "object",
+          "description": "JSON body (auto-sets Content-Type)"
+        },
+        "body": {
+          "type": "string",
+          "description": "Raw body content"
+        },
+        "queryParams": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "expect": {
+          "$ref": "#/definitions/expectations"
+        }
+      },
+      "required": ["method", "url"]
+    },
+    "extraction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["jsonpath", "header", "regex", "status"],
+          "default": "jsonpath"
+        },
+        "path": {
+          "type": "string",
+          "description": "JSONPath expression, header name, or regex pattern"
+        },
+        "as": {
+          "type": "string",
+          "description": "Variable name to store extracted value"
+        },
+        "default": {
+          "description": "Default value if extraction fails"
+        },
+        "transform": {
+          "type": "string",
+          "description": "JavaScript expression to transform value (use 'value' as input)"
+        }
+      },
+      "required": ["path", "as"]
+    },
+    "branch": {
+      "type": "object",
+      "properties": {
+        "condition": {
+          "$ref": "#/definitions/condition"
+        },
+        "goto": {
+          "type": "string",
+          "description": "Step ID to branch to"
+        }
+      },
+      "required": ["condition", "goto"]
+    },
+    "condition": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "JSONPath to the response field to evaluate"
+        },
+        "status": {
+          "type": "integer",
+          "description": "HTTP status code to match"
+        },
+        "header": {
+          "type": "string",
+          "description": "Header name to evaluate"
+        },
+        "eq": {
+          "description": "Equal to value"
+        },
+        "ne": {
+          "description": "Not equal to value"
+        },
+        "gt": {
+          "type": "number",
+          "description": "Greater than value"
+        },
+        "gte": {
+          "type": "number",
+          "description": "Greater than or equal to value"
+        },
+        "lt": {
+          "type": "number",
+          "description": "Less than value"
+        },
+        "lte": {
+          "type": "number",
+          "description": "Less than or equal to value"
+        },
+        "contains": {
+          "type": "string",
+          "description": "String contains value"
+        },
+        "matches": {
+          "type": "string",
+          "description": "Regex pattern to match"
+        },
+        "exists": {
+          "type": "boolean",
+          "description": "Field exists (true) or doesn't exist (false)"
+        },
+        "in": {
+          "type": "array",
+          "description": "Value is in array"
+        }
+      }
+    },
+    "expectations": {
+      "type": "object",
+      "properties": {
+        "statusCode": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "hasFields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "JSONPath fields that must exist"
+        },
+        "maxResponseTime": {
+          "type": "integer",
+          "description": "Maximum response time in milliseconds"
+        }
+      }
+    }
+  }
+}
