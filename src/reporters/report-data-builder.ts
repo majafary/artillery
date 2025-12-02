@@ -37,6 +37,10 @@ export class ReportDataBuilder {
    * Build ReportData from Artillery JSON output
    */
   async build(artilleryOutputPath: string): Promise<ReportData> {
+    if (!existsSync(artilleryOutputPath)) {
+      throw new Error(`Artillery output file not found: ${artilleryOutputPath}. The test may have failed to complete.`);
+    }
+
     const artilleryData = await this.loadArtilleryOutput(artilleryOutputPath);
 
     // Load enhanced report if available
