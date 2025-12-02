@@ -7,7 +7,11 @@ import { spawn, type ChildProcess } from 'child_process';
 import { writeFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import type {
   Journey,
   ProfileConfig,
@@ -126,8 +130,11 @@ export class Runner extends EventEmitter {
       const scriptPath = join(this.tempDir, 'test.yml');
       const processorPath = join(this.tempDir, 'processor.js');
 
+      // Get absolute path to the processor module (in same dir as runner)
+      const processorModulePath = join(__dirname, 'processor.js');
+
       await writeFile(scriptPath, script.yaml);
-      await writeFile(processorPath, generator.generateProcessor());
+      await writeFile(processorPath, generator.generateProcessor(processorModulePath));
 
       this.emit('generated', { scriptPath, processorPath });
 
@@ -182,7 +189,7 @@ export class Runner extends EventEmitter {
    * Create temporary directory for generated files
    */
   private async createTempDir(): Promise<string> {
-    const tempDir = join(
+    const tempDir = resolve(
       this.options.outputDir!,
       `.temp-${Date.now()}`
     );

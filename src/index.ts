@@ -353,8 +353,10 @@ async function generateCommand(journeyPath: string, options: Record<string, unkn
       await writeFile(options.output as string, script.yaml);
       console.log(chalk.green(`✓ Script saved to: ${options.output}`));
 
+      // Get absolute path to the processor module
+      const processorModulePath = join(__dirname, 'artillery', 'processor.js');
       const processorPath = join(dirname(options.output as string), 'processor.js');
-      await writeFile(processorPath, generator.generateProcessor());
+      await writeFile(processorPath, generator.generateProcessor(processorModulePath));
       console.log(chalk.green(`✓ Processor saved to: ${processorPath}`));
     } else {
       console.log(script.yaml);
