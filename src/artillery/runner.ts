@@ -6,7 +6,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { writeFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { EventEmitter } from 'events';
 import type {
   Journey,
@@ -142,7 +142,8 @@ export class Runner extends EventEmitter {
       }
 
       // Run Artillery
-      const outputPath = join(
+      // Use absolute path so Artillery writes to correct location regardless of cwd
+      const outputPath = resolve(
         this.options.outputDir!,
         `report-${Date.now()}.json`
       );
