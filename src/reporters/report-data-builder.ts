@@ -99,41 +99,75 @@ export class ReportDataBuilder {
 
   /**
    * Build summary section
+   * Supports both Artillery v2 (counters/rates) and v1 (flat) formats
    */
   private buildSummary(aggregate: ArtilleryAggregate): TestSummary {
-    const totalRequests = aggregate.requestsCompleted || 0;
-    const failedRequests =
-      (aggregate.codes?.['4xx'] || 0) +
-      (aggregate.codes?.['5xx'] || 0) +
-      (aggregate.errors?.length || 0);
+    // v2 format: counters object
+    const counters = aggregate.counters || {};
+    const rates = aggregate.rates || {};
+
+    // Get total requests (v2: counters['http.requests'], v1: requestsCompleted)
+    const totalRequests = counters['http.requests'] || aggregate.requestsCompleted || 0;
+
+    // Count errors from counters (v2 format: errors.* keys)
+    let errorCount = 0;
+    for (const [key, value] of Object.entries(counters)) {
+      if (key.startsWith('errors.')) {
+        errorCount += value;
+      }
+    }
+
+    // Also check legacy format
+    if (aggregate.errors) {
+      for (const value of Object.values(aggregate.errors)) {
+        errorCount += value;
+      }
+    }
+
+    // Get VU counts
+    const vusersCreated = counters['vusers.created'] || aggregate.scenariosCreated || 0;
+    const vusersFailed = counters['vusers.failed'] || 0;
+    const vusersCompleted = (counters['vusers.completed'] || aggregate.scenariosCompleted || 0) ||
+      (vusersCreated - vusersFailed);
+
+    // Get throughput (v2: rates['http.request_rate'], v1: rps.mean)
+    const throughput = rates['http.request_rate'] || aggregate.rps?.mean || 0;
 
     return {
       totalRequests,
-      successfulRequests: totalRequests - failedRequests,
-      failedRequests,
-      errorRate: totalRequests > 0 ? failedRequests / totalRequests : 0,
-      throughput: aggregate.rps?.mean || 0,
+      successfulRequests: Math.max(0, totalRequests - errorCount),
+      failedRequests: errorCount,
+      errorRate: totalRequests > 0 ? errorCount / totalRequests : 0,
+      throughput,
       virtualUsers: {
-        total: aggregate.scenariosCreated || 0,
-        completed: aggregate.scenariosCompleted || 0,
-        failed: (aggregate.scenariosCreated || 0) - (aggregate.scenariosCompleted || 0),
+        total: vusersCreated,
+        completed: vusersCompleted,
+        failed: vusersFailed,
       },
     };
   }
 
   /**
    * Build latency section
+   * Supports both Artillery v2 (histograms) and v1 (flat latency) formats
    */
   private buildLatency(aggregate: ArtilleryAggregate): LatencyMetrics {
+    // v2 format: histograms['http.response_time']
+    const histograms = aggregate.histograms || {};
+    const responseTimeHist = histograms['http.response_time'] || {};
+
+    // v1 format: aggregate.latency
     const latency = aggregate.latency || {};
+
+    // Merge v2 and v1, preferring v2
     return {
-      min: latency.min || 0,
-      max: latency.max || 0,
-      mean: Math.round(latency.mean || 0),
-      median: latency.median || latency.p50 || 0,
-      p90: latency.p90 || 0,
-      p95: latency.p95 || 0,
-      p99: latency.p99 || 0,
+      min: responseTimeHist.min || latency.min || 0,
+      max: responseTimeHist.max || latency.max || 0,
+      mean: Math.round(responseTimeHist.mean || latency.mean || 0),
+      median: responseTimeHist.median || responseTimeHist.p50 || latency.median || latency.p50 || 0,
+      p90: responseTimeHist.p90 || latency.p90 || 0,
+      p95: responseTimeHist.p95 || latency.p95 || 0,
+      p99: responseTimeHist.p99 || latency.p99 || 0,
       stdDev: 0, // Artillery doesn't provide this directly
     };
   }
@@ -243,6 +277,7 @@ export class ReportDataBuilder {
 
   /**
    * Build threshold results
+   * Supports both Artillery v2 (counters/histograms) and v1 (flat) formats
    */
   private buildThresholdResults(aggregate: ArtilleryAggregate): ThresholdResult[] {
     const results: ThresholdResult[] = [];
@@ -250,14 +285,22 @@ export class ReportDataBuilder {
 
     if (!thresholds) return results;
 
+    // Get latency from v2 histograms or v1 latency object
+    const histograms = aggregate.histograms || {};
+    const responseTimeHist = histograms['http.response_time'] || {};
     const latency = aggregate.latency || {};
+    const lat = {
+      p50: responseTimeHist.p50 || responseTimeHist.median || latency.p50 || latency.median || 0,
+      p95: responseTimeHist.p95 || latency.p95 || 0,
+      p99: responseTimeHist.p99 || latency.p99 || 0,
+    };
 
     if (thresholds.p50ResponseTime !== undefined) {
       results.push({
         metric: 'p50 Response Time',
         threshold: thresholds.p50ResponseTime,
-        actual: latency.p50 || latency.median || 0,
-        passed: (latency.p50 || latency.median || 0) <= thresholds.p50ResponseTime,
+        actual: lat.p50,
+        passed: lat.p50 <= thresholds.p50ResponseTime,
         unit: 'ms',
       });
     }
@@ -266,8 +309,8 @@ export class ReportDataBuilder {
       results.push({
         metric: 'p95 Response Time',
         threshold: thresholds.p95ResponseTime,
-        actual: latency.p95 || 0,
-        passed: (latency.p95 || 0) <= thresholds.p95ResponseTime,
+        actual: lat.p95,
+        passed: lat.p95 <= thresholds.p95ResponseTime,
         unit: 'ms',
       });
     }
@@ -276,17 +319,26 @@ export class ReportDataBuilder {
       results.push({
         metric: 'p99 Response Time',
         threshold: thresholds.p99ResponseTime,
-        actual: latency.p99 || 0,
-        passed: (latency.p99 || 0) <= thresholds.p99ResponseTime,
+        actual: lat.p99,
+        passed: lat.p99 <= thresholds.p99ResponseTime,
         unit: 'ms',
       });
     }
 
     if (thresholds.maxErrorRate !== undefined) {
-      const totalRequests = aggregate.requestsCompleted || 0;
-      const failedRequests =
-        (aggregate.codes?.['4xx'] || 0) + (aggregate.codes?.['5xx'] || 0);
-      const errorRate = totalRequests > 0 ? failedRequests / totalRequests : 0;
+      // v2: counters['http.requests'] and counters['errors.*']
+      const counters = aggregate.counters || {};
+      const totalRequests = counters['http.requests'] || aggregate.requestsCompleted || 0;
+
+      // Count all error counters
+      let errorCount = 0;
+      for (const [key, value] of Object.entries(counters)) {
+        if (key.startsWith('errors.')) {
+          errorCount += value;
+        }
+      }
+
+      const errorRate = totalRequests > 0 ? errorCount / totalRequests : 0;
 
       results.push({
         metric: 'Error Rate',
@@ -320,13 +372,29 @@ export class ReportDataBuilder {
   }
 }
 
-// Types for Artillery output
+// Types for Artillery output (v2 format)
 interface ArtilleryOutput {
   aggregate?: ArtilleryAggregate;
   intermediate?: ArtilleryAggregate[];
 }
 
 interface ArtilleryAggregate {
+  // New v2 format uses nested objects
+  counters?: Record<string, number>;
+  rates?: Record<string, number>;
+  histograms?: Record<string, {
+    min?: number;
+    max?: number;
+    mean?: number;
+    median?: number;
+    p50?: number;
+    p90?: number;
+    p95?: number;
+    p99?: number;
+  }>;
+  summaries?: Record<string, unknown>;
+
+  // Legacy v1 format (for backwards compatibility)
   scenariosCreated?: number;
   scenariosCompleted?: number;
   requestsCompleted?: number;
@@ -346,6 +414,7 @@ interface ArtilleryAggregate {
   };
   codes?: Record<string, number>;
   errors?: Record<string, number>;
+
   firstCounterAt?: number;
   lastCounterAt?: number;
 }

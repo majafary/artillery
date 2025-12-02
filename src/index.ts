@@ -19,6 +19,14 @@ import { buildReportData } from './reporters/report-data-builder.js';
 import { saveMarkdownReport } from './reporters/markdown-reporter.js';
 import { saveHtmlReport } from './reporters/html-reporter.js';
 import type { EnvironmentConfig, CliOptions, Journey } from './types/index.js';
+import {
+  parseDuration,
+  formatDuration,
+  formatNumber,
+  renderProgressBar,
+  formatProgressStats,
+  type ProgressStats,
+} from './utils/format.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -187,21 +195,125 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       return;
     }
 
+    // Calculate total test duration from environment config
+    const phases = envConfig.load?.phases || [{ duration: '1m', arrivalRate: 1 }];
+    const totalDurationMs = phases.reduce((total, phase) => {
+      return total + parseDuration(phase.duration);
+    }, 0);
+
+    // Display pre-execution summary
+    if (!options.quiet) {
+      console.log(chalk.blue('\n📋 Test Plan:\n'));
+      console.log(`   Journey:    ${chalk.white(journey.name)}`);
+      console.log(`   Target:     ${chalk.cyan(envConfig.target.baseUrl)}`);
+      console.log(`   Duration:   ${chalk.yellow(formatDuration(totalDurationMs))} (${phases.length} phase${phases.length > 1 ? 's' : ''})`);
+
+      console.log('');
+      phases.forEach((phase, i) => {
+        const phaseName = phase.name || `Phase ${i + 1}`;
+        const duration = typeof phase.duration === 'string' ? phase.duration : `${phase.duration}ms`;
+        const rate = phase.rampTo
+          ? `${phase.arrivalRate}→${phase.rampTo} req/s`
+          : `${phase.arrivalRate} req/s`;
+        console.log(chalk.gray(`   ${phaseName.padEnd(12)} - ${duration.padEnd(6)} @ ${rate}`));
+      });
+      console.log('');
+    }
+
     // Run test
-    console.log(chalk.blue('\n📊 Starting load test...\n'));
+    console.log(chalk.blue('📊 Running Load Test...\n'));
     const runner = new Runner(config, {
       outputDir: options.output as string,
       verbose: options.verbose as boolean,
       quiet: options.quiet as boolean,
     });
 
-    runner.on('progress', (data) => {
-      if (!options.quiet) {
-        console.log(chalk.gray(data.message));
+    // Progress tracking state
+    const stats: ProgressStats = { requests: 0, errors: 0, vusers: 0, rps: 0 };
+    const startTime = Date.now();
+    let currentPhase = '';
+    let progressInterval: ReturnType<typeof setInterval> | null = null;
+    let lastLineCount = 0;
+
+    // Clear previous progress lines
+    const clearProgress = () => {
+      if (lastLineCount > 0) {
+        process.stdout.write(`\x1b[${lastLineCount}A`); // Move cursor up
+        process.stdout.write('\x1b[0J'); // Clear from cursor to end
+      }
+    };
+
+    // Render progress display
+    const renderProgress = () => {
+      if (options.quiet || options.verbose) return;
+
+      clearProgress();
+
+      const elapsed = Date.now() - startTime;
+      const progressBar = renderProgressBar(elapsed, totalDurationMs);
+      const elapsedStr = formatDuration(elapsed);
+      const totalStr = formatDuration(totalDurationMs);
+
+      const lines = [
+        `${progressBar} | ${elapsedStr} / ${totalStr}`,
+        '',
+        chalk.gray(`   ${formatProgressStats(stats)}`),
+        currentPhase ? chalk.blue(`   Phase: ${currentPhase}`) : '',
+        '',
+      ].filter(Boolean);
+
+      console.log(lines.join('\n'));
+      lastLineCount = lines.length;
+    };
+
+    // Handle progress events
+    runner.on('progress', (data: Record<string, unknown>) => {
+      if (options.quiet) return;
+
+      switch (data.type) {
+        case 'phase-start':
+          currentPhase = `${data.name} (${data.duration})`;
+          break;
+        case 'phase-end':
+          currentPhase = '';
+          break;
+        case 'requests':
+          stats.requests = data.count as number;
+          break;
+        case 'rps':
+          stats.rps = data.count as number;
+          break;
+        case 'vusers':
+          stats.vusers = data.count as number;
+          break;
+        case 'errors':
+          // Artillery reports cumulative errors per period, so use the count directly
+          stats.errors = data.count as number;
+          break;
+        case 'complete':
+          if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = null;
+          }
+          clearProgress();
+          console.log(chalk.green(`   ${data.message}\n`));
+          break;
       }
     });
 
+    // Start progress update interval (every second)
+    if (!options.quiet && !options.verbose) {
+      progressInterval = setInterval(renderProgress, 1000);
+      renderProgress(); // Initial render
+    }
+
     const result = await runner.run();
+
+    // Clean up progress interval
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      clearProgress();
+    }
 
     if (!result.success) {
       console.log(chalk.red('\n❌ Test failed:'));

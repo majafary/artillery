@@ -228,12 +228,13 @@ export class Runner extends EventEmitter {
 
       if (this.artilleryProcess.stdout && !this.options.verbose) {
         this.artilleryProcess.stdout.on('data', (data) => {
-          const line = data.toString();
-          this.emit('output', line);
+          const output = data.toString();
+          this.emit('output', output);
 
-          // Parse progress from Artillery output
-          if (line.includes('Elapsed time:')) {
-            this.emit('progress', { message: line.trim() });
+          // Parse progress from Artillery output - handle multi-line output
+          const lines = output.split('\n');
+          for (const line of lines) {
+            this.parseArtilleryOutput(line);
           }
         });
       }
@@ -308,6 +309,98 @@ export class Runner extends EventEmitter {
       rps: { mean: 0, max: 0 },
       codes: {},
     };
+  }
+
+  /**
+   * Parse Artillery output line and emit progress events
+   */
+  private parseArtilleryOutput(line: string): void {
+    // Phase transitions
+    if (line.includes('Phase started:')) {
+      const match = line.match(/Phase started: (.+) \(index: (\d+), duration: ([^)]+)\)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'phase-start',
+          name: match[1],
+          index: parseInt(match[2], 10),
+          duration: match[3],
+        });
+      }
+    }
+
+    if (line.includes('Phase completed:')) {
+      const match = line.match(/Phase completed: (.+) \(index: (\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'phase-end',
+          name: match[1],
+          index: parseInt(match[2], 10),
+        });
+      }
+    }
+
+    // Request metrics
+    if (line.includes('http.requests:')) {
+      const match = line.match(/http\.requests:\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'requests',
+          count: parseInt(match[1], 10),
+        });
+      }
+    }
+
+    // Request rate
+    if (line.includes('http.request_rate:')) {
+      const match = line.match(/http\.request_rate:\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'rps',
+          count: parseInt(match[1], 10),
+        });
+      }
+    }
+
+    // Virtual users
+    if (line.includes('vusers.created:')) {
+      const match = line.match(/vusers\.created:\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'vusers',
+          count: parseInt(match[1], 10),
+        });
+      }
+    }
+
+    if (line.includes('vusers.failed:')) {
+      const match = line.match(/vusers\.failed:\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'vusers-failed',
+          count: parseInt(match[1], 10),
+        });
+      }
+    }
+
+    // Errors
+    if (line.includes('errors.')) {
+      const match = line.match(/errors\.(\w+):\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'errors',
+          errorType: match[1],
+          count: parseInt(match[2], 10),
+        });
+      }
+    }
+
+    // All VUs finished
+    if (line.includes('All VUs finished')) {
+      this.emit('progress', {
+        type: 'complete',
+        message: line.trim(),
+      });
+    }
   }
 
   /**
