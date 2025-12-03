@@ -72,13 +72,34 @@ export class ProfileDistributor {
   }
 
   /**
-   * Load user data from all profile data sources
+   * Load user data from all profile data sources (async version for file-based sources)
    */
   async loadData(): Promise<void> {
     for (const profile of this.config.profiles) {
       if (profile.dataSource) {
         const data = await this.loadDataSource(profile.dataSource);
         this.userDataCache.set(profile.name, data);
+      } else if (profile.data) {
+        this.userDataCache.set(profile.name, profile.data);
+      } else {
+        // Empty data - generators only
+        this.userDataCache.set(profile.name, [{}]);
+      }
+    }
+  }
+
+  /**
+   * Load user data synchronously (for inline data only)
+   * Call this when you can't use async (e.g., in Artillery processor hooks)
+   * Throws if any profile uses file-based dataSource
+   */
+  loadDataSync(): void {
+    for (const profile of this.config.profiles) {
+      if (profile.dataSource) {
+        throw new Error(
+          `Profile "${profile.name}" uses file-based dataSource. ` +
+          `Use async loadData() instead, or switch to inline data.`
+        );
       } else if (profile.data) {
         this.userDataCache.set(profile.name, profile.data);
       } else {

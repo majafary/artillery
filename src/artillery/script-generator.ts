@@ -13,6 +13,42 @@ import type {
 } from '../types/index.js';
 import { FlowEngine } from '../core/flow-engine.js';
 
+// Template marker escape sequences
+// Artillery's template engine processes {{...}} at YAML load time, which corrupts our templates
+// We escape them to markers that Artillery won't process, then unescape in the processor
+const TEMPLATE_OPEN_MARKER = '__SHIELD_VAR_OPEN__';
+const TEMPLATE_CLOSE_MARKER = '__SHIELD_VAR_CLOSE__';
+
+/**
+ * Recursively escape template markers in an object
+ * Replaces {{ with __SHIELD_VAR_OPEN__ and }} with __SHIELD_VAR_CLOSE__
+ */
+function escapeTemplateMarkers(obj: unknown): unknown {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === 'string') {
+    return obj
+      .replace(/\{\{/g, TEMPLATE_OPEN_MARKER)
+      .replace(/\}\}/g, TEMPLATE_CLOSE_MARKER);
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => escapeTemplateMarkers(item));
+  }
+
+  if (typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = escapeTemplateMarkers(value);
+    }
+    return result;
+  }
+
+  return obj;
+}
+
 export interface GeneratedScript {
   yaml: string;
   config: ArtilleryConfig;
@@ -117,13 +153,18 @@ export class ScriptGenerator {
    * Note: Step metrics are collected via processor and extracted from Artillery's output
    */
   private buildConfig(): ArtilleryConfig {
+    // Escape template markers in journey and profiles to prevent Artillery from processing them
+    // Artillery's template engine would convert {{user.email}} to "" at YAML load time
+    const escapedJourney = escapeTemplateMarkers(this.journey);
+    const escapedProfiles = this.profiles ? escapeTemplateMarkers(this.profiles) : undefined;
+
     const config: ArtilleryConfig = {
       target: this.journey.baseUrl || this.environment.target.baseUrl,
       phases: this.buildPhases(),
       processor: './processor.cjs',
       variables: {
-        __journey: this.journey,
-        __profiles: this.profiles,
+        __journey: escapedJourney,
+        __profiles: escapedProfiles,
       },
     };
 
@@ -235,16 +276,26 @@ export class ScriptGenerator {
       ifTrue: `shouldExecuteStep_${step.id}`,
     };
 
-    // Add headers
-    if (step.request.headers) {
-      request.headers = step.request.headers;
-    }
-
-    // Add body
+    // IMPORTANT: Artillery's request body handling requires special care.
+    //
+    // Artillery's template engine processes {{...}} variables BEFORE the beforeRequest hook runs.
+    // When variables are undefined (e.g., user data not yet loaded), Artillery converts them to
+    // empty strings, which corrupts JSON structure.
+    //
+    // Solution: We add an EMPTY json placeholder `json: {}` here ONLY when the step has a body.
+    // This tells Artillery to prepare a JSON request, then beforeRequest hook replaces the
+    // empty body with the properly interpolated values from config.variables.__journey.
+    //
+    // This approach ensures:
+    // 1. Artillery knows this is a JSON request and sets Content-Type appropriately
+    // 2. The body can be modified in beforeRequest before the HTTP request is sent
+    // 3. Variables are interpolated with proper user context (loaded in beforeScenario)
     if (step.request.json) {
-      request.json = step.request.json;
+      // Add empty placeholder - beforeRequest will populate with interpolated values
+      request.json = {};
     } else if (step.request.body) {
-      request.body = step.request.body;
+      // For string body, add empty string placeholder
+      request.body = '';
     }
 
     // Add native captures for simple extractions
@@ -349,6 +400,60 @@ const DEBUG_LOG_PATH = '${escapedDebugPath}';
 fs.writeFileSync(DEBUG_LOG_PATH, '=== Shield Artillery Debug Log ===\\n' +
   'Started: ' + new Date().toISOString() + '\\n\\n');
 
+// Wrap beforeRequest to add debug logging
+const originalBeforeRequest = processor.beforeRequest;
+module.exports.beforeRequest = function(requestParams, context, ee, next) {
+  // Log BEFORE state with detailed context info
+  const beforeLog = {
+    timestamp: new Date().toISOString(),
+    phase: 'BEFORE beforeRequest',
+    step: requestParams.__stepId || 'unknown',
+    requestParams: {
+      url: requestParams.url,
+      method: requestParams.method,
+      headers: requestParams.headers,
+      json: requestParams.json,
+      body: requestParams.body
+    },
+    contextVars: Object.keys(context.vars).filter(k => !k.startsWith('__')),
+    internalVars: Object.keys(context.vars).filter(k => k.startsWith('__')),
+    hasJourney: !!context.vars.__journey,
+    hasProfiles: !!context.vars.__profiles,
+    hasUser: !!context.vars.user,
+    userData: context.vars.user || null
+  };
+
+  fs.appendFileSync(DEBUG_LOG_PATH,
+    '--- beforeRequest Debug ---\\n' +
+    JSON.stringify(beforeLog, null, 2) + '\\n\\n'
+  );
+
+  // Call original handler
+  return originalBeforeRequest(requestParams, context, ee, function() {
+    // Log AFTER state with detailed info
+    const afterLog = {
+      timestamp: new Date().toISOString(),
+      phase: 'AFTER beforeRequest',
+      step: requestParams.__stepId || 'unknown',
+      requestParams: {
+        url: requestParams.url,
+        method: requestParams.method,
+        headers: requestParams.headers,
+        json: requestParams.json,
+        body: requestParams.body
+      },
+      hasUser: !!context.vars.user,
+      userData: context.vars.user || null
+    };
+
+    fs.appendFileSync(DEBUG_LOG_PATH,
+      JSON.stringify(afterLog, null, 2) + '\\n\\n'
+    );
+
+    next();
+  });
+};
+
 // Wrap afterResponse to add debug logging
 const originalAfterResponse = processor.afterResponse;
 module.exports.afterResponse = function(requestParams, response, context, ee, next) {
@@ -390,7 +495,7 @@ ${debugSetup}
 // Re-export standard processor functions
 module.exports.initialize = processor.initialize;
 module.exports.setupUser = processor.setupUser;
-module.exports.beforeRequest = processor.beforeRequest;
+${debugLogPath ? '// beforeRequest is wrapped above for debug logging' : 'module.exports.beforeRequest = processor.beforeRequest;'}
 ${debugLogPath ? '// afterResponse is wrapped above for debug logging' : 'module.exports.afterResponse = processor.afterResponse;'}
 module.exports.think = processor.think;
 module.exports.cleanup = processor.cleanup;

@@ -379,6 +379,10 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       console.log(chalk.green(`✓ HTML report: ${htmlPath}`));
     }
 
+    if (result.debugLogPath) {
+      console.log(chalk.yellow(`✓ Debug log: ${result.debugLogPath}`));
+    }
+
     // Print summary
     console.log(chalk.blue('\n📈 Test Summary:\n'));
     console.log(`  Total Requests:    ${chalk.white(reportData.summary.totalRequests)}`);

@@ -11,6 +11,40 @@ import { DataExtractor } from '../core/data-extractor.js';
 import { ProfileDistributor } from '../core/profile-distributor.js';
 import { interpolateObject } from '../utils/template.js';
 
+// Template marker escape sequences (must match script-generator.ts)
+const TEMPLATE_OPEN_MARKER = '__SHIELD_VAR_OPEN__';
+const TEMPLATE_CLOSE_MARKER = '__SHIELD_VAR_CLOSE__';
+
+/**
+ * Recursively unescape template markers in an object
+ * Replaces __SHIELD_VAR_OPEN__ with {{ and __SHIELD_VAR_CLOSE__ with }}
+ */
+function unescapeTemplateMarkers(obj: unknown): unknown {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === 'string') {
+    return obj
+      .replace(new RegExp(TEMPLATE_OPEN_MARKER, 'g'), '{{')
+      .replace(new RegExp(TEMPLATE_CLOSE_MARKER, 'g'), '}}');
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => unescapeTemplateMarkers(item));
+  }
+
+  if (typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = unescapeTemplateMarkers(value);
+    }
+    return result;
+  }
+
+  return obj;
+}
+
 // Artillery context type (simplified)
 interface ArtilleryContext {
   vars: Record<string, unknown>;
@@ -60,25 +94,60 @@ let profileDistributor: ProfileDistributor | null = null;
 /**
  * Initialize processor with journey and dependencies
  * Called by Artillery via config.processor
+ * Note: context.vars may not contain config.variables at this point
  */
 export function initialize(
   context: ArtilleryContext,
   events: EventEmitter,
   done: () => void
 ): void {
-  // Get journey from context (injected by script generator)
-  journey = context.vars.__journey as Journey;
-
-  if (journey) {
+  // Try to get journey from context (might not be available yet)
+  if (context.vars.__journey && !journey) {
+    journey = context.vars.__journey as Journey;
     flowEngine = new FlowEngine(journey);
   }
 
-  dataExtractor = new DataExtractor();
+  if (!dataExtractor) {
+    dataExtractor = new DataExtractor();
+  }
 
   // Get profile distributor if available
-  profileDistributor = context.vars.__profileDistributor as ProfileDistributor | null;
+  if (context.vars.__profileDistributor && !profileDistributor) {
+    profileDistributor = context.vars.__profileDistributor as ProfileDistributor | null;
+  }
 
   done();
+}
+
+/**
+ * Ensure journey is initialized from context
+ * Called at the start of scenario execution when config.variables are available
+ * IMPORTANT: Template markers are escaped in the YAML to prevent Artillery from
+ * processing {{...}} variables. We unescape them here to restore the original templates.
+ */
+function ensureJourneyInitialized(context: ArtilleryContext): void {
+  if (!journey && context.vars.__journey) {
+    // Unescape template markers that were escaped in script-generator to prevent
+    // Artillery's template engine from processing them at YAML load time
+    journey = unescapeTemplateMarkers(context.vars.__journey) as Journey;
+    flowEngine = new FlowEngine(journey);
+  }
+  if (!dataExtractor) {
+    dataExtractor = new DataExtractor();
+  }
+  // Handle both __profileDistributor (instantiated) and __profiles (raw config)
+  if (!profileDistributor) {
+    if (context.vars.__profileDistributor) {
+      profileDistributor = context.vars.__profileDistributor as ProfileDistributor;
+    } else if (context.vars.__profiles) {
+      // Create ProfileDistributor from raw profiles config passed via script generator
+      // Note: loadDataSync() only works for inline data (profile.data), not file-based dataSource
+      // Also unescape any template markers in profile data
+      const profileConfig = unescapeTemplateMarkers(context.vars.__profiles) as import('../types/index.js').ProfileConfig;
+      profileDistributor = new ProfileDistributor(profileConfig);
+      profileDistributor.loadDataSync(); // Load inline data synchronously
+    }
+  }
 }
 
 /**
@@ -90,6 +159,9 @@ export function setupUser(
   events: EventEmitter,
   done: () => void
 ): void {
+  // Ensure journey is initialized (config.variables now available)
+  ensureJourneyInitialized(context);
+
   // Get user data from profile distributor
   if (profileDistributor) {
     const userContext = profileDistributor.getNextUser();
@@ -127,6 +199,9 @@ export function beforeRequest(
   ee: EventEmitter,
   next: () => void
 ): void {
+  // Ensure journey is initialized
+  ensureJourneyInitialized(context);
+
   if (!journey) {
     next();
     return;
@@ -151,22 +226,37 @@ export function beforeRequest(
   requestParams.url = interpolateObject(requestParams.url, interpolationContext);
 
   // Merge and interpolate headers
+  // IMPORTANT: Use headers from journey definition, not from Artillery's processed requestParams
+  // Artillery may have already processed template variables before this hook runs
   const defaultHeaders = journey.defaults?.headers || {};
   const stepHeaders = step.request.headers || {};
+  const existingHeaders = requestParams.headers || {};
   requestParams.headers = {
     ...interpolateObject(defaultHeaders, interpolationContext),
     ...interpolateObject(stepHeaders, interpolationContext),
-    ...requestParams.headers,
+    // Only keep non-template headers from Artillery (like user-agent)
+    ...Object.fromEntries(
+      Object.entries(existingHeaders).filter(
+        ([key]) => !key.toLowerCase().startsWith('content-')
+      )
+    ),
   };
 
   // Interpolate JSON body
-  if (requestParams.json) {
-    requestParams.json = interpolateObject(requestParams.json, interpolationContext);
+  // IMPORTANT: The script generator adds an empty `json: {}` placeholder for POST requests with JSON body.
+  // This tells Artillery to prepare a JSON request. Here in beforeRequest, we replace the empty body
+  // with properly interpolated values from the journey definition (stored in config.variables.__journey).
+  // This ensures variables like {{user.email}} are interpolated with actual user data loaded in setupUser.
+  if (step.request.json) {
+    // Deep clone and interpolate the original step body from journey definition
+    const originalBody = JSON.parse(JSON.stringify(step.request.json));
+    const interpolatedBody = interpolateObject(originalBody, interpolationContext);
+    requestParams.json = interpolatedBody;
   }
 
-  // Interpolate string body
-  if (requestParams.body && typeof requestParams.body === 'string') {
-    requestParams.body = interpolateObject(requestParams.body, interpolationContext);
+  // Interpolate string body from journey definition
+  if (step.request.body && typeof step.request.body === 'string') {
+    requestParams.body = interpolateObject(step.request.body, interpolationContext);
   }
 
   // Record step start
@@ -260,11 +350,16 @@ export function afterResponse(
 /**
  * Check if a step should execute based on flow state
  * Used by Artillery's ifTrue condition
+ * IMPORTANT: This may be called BEFORE beforeScenario (setupUser), so we must
+ * ensure journey is initialized from context.vars.__journey here.
  */
 export function shouldExecuteStep(
   context: ArtilleryContext,
   stepId: string
 ): boolean {
+  // CRITICAL: Initialize journey from context - ifTrue is evaluated before beforeScenario
+  ensureJourneyInitialized(context);
+
   const nextStep = context.vars.__nextStep as string | undefined;
   const executedSteps = (context.vars.__executedSteps as string[]) || [];
 

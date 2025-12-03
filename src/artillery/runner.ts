@@ -43,6 +43,8 @@ export interface RunResult {
   outputPath: string;
   metrics: RunMetrics;
   errors: string[];
+  /** Path to debug log file (only when --debug is enabled) */
+  debugLogPath?: string;
 }
 
 export interface RunMetrics {
@@ -182,6 +184,7 @@ export class Runner extends EventEmitter {
         outputPath,
         metrics,
         errors: result.errors,
+        debugLogPath,
       };
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
