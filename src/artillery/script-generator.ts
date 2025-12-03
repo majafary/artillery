@@ -23,7 +23,6 @@ export interface ArtilleryConfig {
   target: string;
   phases: ArtilleryPhase[];
   processor: string;
-  plugins?: Record<string, unknown>;
   variables?: Record<string, unknown>;
   http?: {
     timeout?: number;
@@ -115,20 +114,13 @@ export class ScriptGenerator {
 
   /**
    * Build Artillery config section
+   * Note: Step metrics are collected via processor and extracted from Artillery's output
    */
   private buildConfig(): ArtilleryConfig {
     const config: ArtilleryConfig = {
       target: this.journey.baseUrl || this.environment.target.baseUrl,
       phases: this.buildPhases(),
       processor: './processor.cjs',
-      plugins: {
-        // Use local path so Artillery can find the plugin
-        './plugin.cjs': {
-          enabled: true,
-          stepMetrics: true,
-          reportPath: './enhanced-report.json',
-        },
-      },
       variables: {
         __journey: this.journey,
         __profiles: this.profiles,

@@ -360,7 +360,6 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       journey,
       environment: envConfig.name,
       thresholds: envConfig.thresholds,
-      enhancedReportPath: result.enhancedReportPath,
     });
 
     const formats = options.format as string[];

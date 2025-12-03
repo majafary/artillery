@@ -6,6 +6,7 @@ dist/
 
 # Test reports
 reports/
+artillery-output/
 *.report.md
 *.report.html
 

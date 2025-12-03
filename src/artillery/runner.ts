@@ -4,7 +4,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
-import { writeFile, mkdir, rm, copyFile } from 'fs/promises';
+import { writeFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -41,7 +41,6 @@ export interface RunResult {
   success: boolean;
   duration: number;
   outputPath: string;
-  enhancedReportPath?: string;
   metrics: RunMetrics;
   errors: string[];
 }
@@ -125,31 +124,27 @@ export class Runner extends EventEmitter {
         };
       }
 
-      const script = generator.generate();
-
       // Create temp directory for generated files
       this.tempDir = await this.createTempDir();
 
-      // Write generated files
+      // Calculate paths for generated files
       const scriptPath = join(this.tempDir, 'test.yml');
       // Use .cjs extension so Node treats it as CommonJS (project uses "type": "module")
       const processorPath = join(this.tempDir, 'processor.cjs');
-      const pluginPath = join(this.tempDir, 'plugin.cjs');
 
       // Get absolute path to the processor module (in same dir as runner)
       const processorModulePath = join(__dirname, 'processor.js');
-      const pluginModulePath = join(__dirname, 'plugin.js');
 
       // Generate debug log path if debug mode is enabled
       const debugLogPath = this.options.debug
         ? resolve(this.options.outputDir!, `debug-${Date.now()}.log`)
         : undefined;
 
+      // Generate Artillery script
+      const script = generator.generate();
+
       await writeFile(scriptPath, script.yaml);
       await writeFile(processorPath, generator.generateProcessor(processorModulePath, debugLogPath));
-      // Generate CommonJS wrapper for the plugin (Artillery needs CommonJS)
-      const pluginWrapper = this.generatePluginWrapper(pluginModulePath);
-      await writeFile(pluginPath, pluginWrapper);
 
       this.emit('generated', { scriptPath, processorPath });
 
@@ -176,14 +171,6 @@ export class Runner extends EventEmitter {
       // Parse results
       const metrics = await this.parseResults(outputPath);
 
-      // Copy enhanced report to output directory before cleanup
-      let enhancedReportPath: string | undefined;
-      const tempEnhancedPath = join(this.tempDir!, 'enhanced-report.json');
-      if (existsSync(tempEnhancedPath)) {
-        enhancedReportPath = join(dirname(outputPath), `enhanced-${Date.now()}.json`);
-        await copyFile(tempEnhancedPath, enhancedReportPath);
-      }
-
       // Cleanup temp files
       if (!this.options.keepGeneratedFiles && this.tempDir) {
         await rm(this.tempDir, { recursive: true, force: true });
@@ -193,7 +180,6 @@ export class Runner extends EventEmitter {
         success: result.code === 0,
         duration: Date.now() - startTime,
         outputPath,
-        enhancedReportPath,
         metrics,
         errors: result.errors,
       };
@@ -332,26 +318,6 @@ export class Runner extends EventEmitter {
       rps: { mean: 0, max: 0 },
       codes: {},
     };
-  }
-
-  /**
-   * Generate CommonJS wrapper for the plugin
-   * Artillery requires CommonJS plugins, but our plugin is ESM
-   */
-  private generatePluginWrapper(pluginModulePath: string): string {
-    // Escape backslashes for Windows paths
-    const escapedPath = pluginModulePath.replace(/\\/g, '\\\\');
-
-    return `/**
- * Generated Artillery Plugin Wrapper
- * CommonJS wrapper for the ESM plugin module
- */
-
-const pluginModule = require('${escapedPath}');
-
-// Re-export the Plugin class for Artillery
-module.exports = pluginModule;
-`;
   }
 
   /**

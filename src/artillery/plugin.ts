@@ -51,8 +51,17 @@ class ShieldArtilleryPlugin {
   constructor(script: ArtilleryScript, events: EventEmitter) {
     this.script = script;
     this.events = events;
-    // Plugin is loaded via local path './plugin.cjs'
-    this.config = script.config.plugins?.['./plugin.cjs'] || { enabled: true };
+
+    // Find our config - the key is an absolute path ending with 'plugin.cjs'
+    this.config = { enabled: true };
+    if (script.config.plugins) {
+      for (const [key, value] of Object.entries(script.config.plugins)) {
+        if (key.endsWith('plugin.cjs')) {
+          this.config = value as PluginConfig;
+          break;
+        }
+      }
+    }
 
     if (!this.config.enabled) {
       return;

@@ -55,11 +55,11 @@ export class ReportDataBuilder {
       metadata: this.buildMetadata(artilleryData),
       summary: this.buildSummary(aggregate),
       latency: this.buildLatency(aggregate),
-      stepMetrics: this.buildStepMetrics(enhancedData),
+      stepMetrics: this.buildStepMetrics(enhancedData, aggregate),
       phases: this.buildPhases(artilleryData),
       errors: this.buildErrors(aggregate, enhancedData),
       thresholdResults: this.buildThresholdResults(aggregate),
-      profiles: this.buildProfileMetrics(enhancedData),
+      profiles: this.buildProfileMetrics(enhancedData, aggregate),
     };
   }
 
@@ -213,36 +213,86 @@ export class ReportDataBuilder {
   }
 
   /**
-   * Build step metrics from enhanced report
+   * Build step metrics from Artillery output or enhanced report
+   * Extracts step-level metrics from Artillery's counters/histograms
    */
-  private buildStepMetrics(enhancedData: EnhancedReportData | null): Map<string, StepMetrics> {
+  private buildStepMetrics(
+    enhancedData: EnhancedReportData | null,
+    aggregate?: ArtilleryAggregate
+  ): Map<string, StepMetrics> {
     const metrics = new Map<string, StepMetrics>();
 
-    // Use enhanced data if available
+    // Initialize metrics for all journey steps
+    for (const step of this.options.journey.steps) {
+      metrics.set(step.id, {
+        stepId: step.id,
+        stepName: step.name || step.id,
+        requestCount: 0,
+        successCount: 0,
+        errorCount: 0,
+        latency: { min: 0, max: 0, mean: 0, median: 0, p90: 0, p95: 0, p99: 0, stdDev: 0 },
+        statusCodes: new Map(),
+        errorMessages: new Map(),
+      });
+    }
+
+    // Extract step metrics from Artillery's counters/histograms
+    if (aggregate) {
+      const counters = aggregate.counters || {};
+      const histograms = aggregate.histograms || {};
+
+      // Parse step.{stepId}.status.{code} counters
+      for (const [key, count] of Object.entries(counters)) {
+        const statusMatch = key.match(/^step\.([^.]+)\.status\.(\d+)$/);
+        if (statusMatch) {
+          const [, stepId, statusCode] = statusMatch;
+          const stepMetrics = metrics.get(stepId);
+          if (stepMetrics) {
+            const code = parseInt(statusCode, 10);
+            stepMetrics.statusCodes.set(code, count);
+            stepMetrics.requestCount += count;
+            if (code >= 200 && code < 300) {
+              stepMetrics.successCount += count;
+            } else {
+              stepMetrics.errorCount += count;
+            }
+          }
+        }
+      }
+
+      // Parse step.{stepId}.response_time histograms
+      for (const [key, hist] of Object.entries(histograms)) {
+        const histMatch = key.match(/^step\.([^.]+)\.response_time$/);
+        if (histMatch && hist) {
+          const [, stepId] = histMatch;
+          const stepMetrics = metrics.get(stepId);
+          if (stepMetrics) {
+            stepMetrics.latency = {
+              min: hist.min || 0,
+              max: hist.max || 0,
+              mean: Math.round(hist.mean || 0),
+              median: hist.median || hist.p50 || 0,
+              p90: hist.p90 || 0,
+              p95: hist.p95 || 0,
+              p99: hist.p99 || 0,
+              stdDev: 0,
+            };
+          }
+        }
+      }
+    }
+
+    // Override with enhanced data if available (more accurate)
     if (enhancedData?.stepMetrics) {
       for (const [stepId, data] of Object.entries(enhancedData.stepMetrics)) {
         metrics.set(stepId, {
           stepId,
-          stepName: data.stepId, // Use step ID as name if not available
+          stepName: data.stepId,
           requestCount: data.requestCount,
           successCount: data.successCount,
           errorCount: data.errorCount,
           latency: data.latency,
           statusCodes: new Map(Object.entries(data.statusCodes).map(([k, v]) => [parseInt(k), v])),
-          errorMessages: new Map(),
-        });
-      }
-    } else {
-      // Create basic step metrics from journey definition
-      for (const step of this.options.journey.steps) {
-        metrics.set(step.id, {
-          stepId: step.id,
-          stepName: step.name || step.id,
-          requestCount: 0,
-          successCount: 0,
-          errorCount: 0,
-          latency: { min: 0, max: 0, mean: 0, median: 0, p90: 0, p95: 0, p99: 0, stdDev: 0 },
-          statusCodes: new Map(),
           errorMessages: new Map(),
         });
       }
@@ -393,21 +443,51 @@ export class ReportDataBuilder {
   }
 
   /**
-   * Build profile metrics
+   * Build profile metrics from Artillery output or enhanced report
+   * Extracts profile data from Artillery's journey.profile.{name} counters
    */
-  private buildProfileMetrics(enhancedData: EnhancedReportData | null): ProfileMetrics[] {
-    if (!enhancedData?.profiles) return [];
+  private buildProfileMetrics(
+    enhancedData: EnhancedReportData | null,
+    aggregate?: ArtilleryAggregate
+  ): ProfileMetrics[] {
+    const profiles: Record<string, number> = {};
 
-    const total = Object.values(enhancedData.profiles).reduce((a, b) => a + b, 0);
+    // Extract profile counts from Artillery's counters
+    if (aggregate?.counters) {
+      for (const [key, count] of Object.entries(aggregate.counters)) {
+        const profileMatch = key.match(/^journey\.profile\.(.+)$/);
+        if (profileMatch) {
+          const [, profileName] = profileMatch;
+          profiles[profileName] = count;
+        }
+      }
+    }
 
-    return Object.entries(enhancedData.profiles).map(([name, count]) => ({
+    // Override with enhanced data if available
+    if (enhancedData?.profiles) {
+      Object.assign(profiles, enhancedData.profiles);
+    }
+
+    if (Object.keys(profiles).length === 0) return [];
+
+    const total = Object.values(profiles).reduce((a, b) => a + b, 0);
+
+    // Get journey duration from histograms if available
+    let avgJourneyTime = 0;
+    if (aggregate?.histograms?.['journey.duration']) {
+      avgJourneyTime = aggregate.histograms['journey.duration'].mean || 0;
+    } else if (enhancedData?.journeyDurations?.mean) {
+      avgJourneyTime = enhancedData.journeyDurations.mean;
+    }
+
+    return Object.entries(profiles).map(([name, count]) => ({
       profileName: name,
       weight: 0, // Would need profile config to know target weight
       actualPercentage: total > 0 ? count / total : 0,
       userCount: count,
       completedJourneys: count, // Simplified
       failedJourneys: 0,
-      avgJourneyTime: enhancedData.journeyDurations?.mean || 0,
+      avgJourneyTime,
     }));
   }
 }
