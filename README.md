@@ -429,6 +429,7 @@ shield-artillery/
 │       │   ├── dev.env.json          # Development environment
 │       │   └── staging.env.json      # Staging environment
 │       └── data/
+│           ├── normal-users.csv      # Standard test users
 │           ├── bound-users.csv       # Users with bound devices
 │           └── mfa-users.csv         # Users requiring MFA
 │
@@ -734,14 +735,19 @@ Execute a load test from a journey configuration.
 node dist/index.js run <journey> [options]
 
 Options:
-  -e, --environment <path>    Path to environment config (required)
+  -e, --environment <name>    Environment name or path to env config (default: localhost:3000)
   -p, --profiles <path>       Path to user profiles config
   -o, --output <dir>          Output directory for reports (default: "./reports")
-  -f, --format <formats...>   Report formats: markdown, html, json
+  -f, --format <formats...>   Report formats: markdown, html, json (default: markdown, html)
   --dry-run                   Generate Artillery script without executing
-  -v, --verbose               Verbose output
-  -q, --quiet                 Minimal output
+  -v, --verbose               Verbose output (shows Artillery's raw output)
+  -q, --quiet                 Minimal output (no progress bar)
+  --debug                     Log HTTP request/response details to debug-*.log file
 ```
+
+**Environment resolution**: The `-e` flag accepts either:
+- A file path: `-e ./environments/staging.env.json`
+- An environment name: `-e staging` (searches `./environments/staging.env.json`, `./staging.env.json`, `./config/staging.json`)
 
 ### validate
 
@@ -881,8 +887,14 @@ node dist/index.js run journey.json -e env.json --dry-run
 # Validate journey to see execution paths
 node dist/index.js validate journey.json
 
-# Run with verbose output
+# Run with verbose output (shows Artillery's raw metrics)
 node dist/index.js run journey.json -e env.json -v
+
+# Debug HTTP request/response details (writes to debug-*.log)
+node dist/index.js run journey.json -e env.json --debug
+
+# Combine verbose and debug for maximum visibility
+node dist/index.js run journey.json -e env.json -v --debug
 ```
 
 ---
@@ -931,26 +943,33 @@ private evaluateCondition(condition: Condition, value: unknown): boolean {
 See `examples/ciam-auth/` for a complete working example:
 
 ```bash
+# Validate the simple login journey
+node dist/index.js validate ./examples/ciam-auth/simple-login.journey.json
+
 # Validate the OTP MFA journey
 node dist/index.js validate ./examples/ciam-auth/otp-mfa.journey.json
 
 # Dry run to see generated script
-node dist/index.js run ./examples/ciam-auth/otp-mfa.journey.json \
+node dist/index.js run ./examples/ciam-auth/simple-login.journey.json \
   -e ./examples/ciam-auth/environments/dev.env.json \
   -p ./examples/ciam-auth/users.profile.json \
   --dry-run
 
-# Execute the test
-node dist/index.js run ./examples/ciam-auth/otp-mfa.journey.json \
+# Execute the test with profiles
+node dist/index.js run ./examples/ciam-auth/simple-login.journey.json \
   -e ./examples/ciam-auth/environments/dev.env.json \
   -p ./examples/ciam-auth/users.profile.json \
   -o ./reports
+
+# Quick local test (no profile, uses default localhost:3000)
+node dist/index.js run ./examples/ciam-auth/simple-login.journey.json -e local
 ```
 
 The example includes:
 - **Simple login journey**: For users with bound devices (no MFA)
 - **OTP MFA journey**: Full flow with initiate → fetch OTP → verify → device bind
-- **50/50 user distribution**: Half bound-device users, half MFA users
+- **Three-tier user distribution**: 60% normal users, 25% bound-device users, 15% MFA users
+- **Profile-specific journeys**: Each profile can run different journeys
 - **Dev environment config**: Configured for 1.2M calls/day target volume
 
 ---
