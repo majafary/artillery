@@ -4,7 +4,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
-import { writeFile, mkdir, rm } from 'fs/promises';
+import { writeFile, mkdir, rm, copyFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -41,6 +41,7 @@ export interface RunResult {
   success: boolean;
   duration: number;
   outputPath: string;
+  enhancedReportPath?: string;
   metrics: RunMetrics;
   errors: string[];
 }
@@ -170,6 +171,14 @@ export class Runner extends EventEmitter {
       // Parse results
       const metrics = await this.parseResults(outputPath);
 
+      // Copy enhanced report to output directory before cleanup
+      let enhancedReportPath: string | undefined;
+      const tempEnhancedPath = join(this.tempDir!, 'enhanced-report.json');
+      if (existsSync(tempEnhancedPath)) {
+        enhancedReportPath = join(dirname(outputPath), `enhanced-${Date.now()}.json`);
+        await copyFile(tempEnhancedPath, enhancedReportPath);
+      }
+
       // Cleanup temp files
       if (!this.options.keepGeneratedFiles && this.tempDir) {
         await rm(this.tempDir, { recursive: true, force: true });
@@ -179,6 +188,7 @@ export class Runner extends EventEmitter {
         success: result.code === 0,
         duration: Date.now() - startTime,
         outputPath,
+        enhancedReportPath,
         metrics,
         errors: result.errors,
       };

@@ -125,6 +125,7 @@ export class ScriptGenerator {
         'shield-artillery': {
           enabled: true,
           stepMetrics: true,
+          reportPath: './enhanced-report.json',
         },
       },
       variables: {
