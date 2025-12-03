@@ -167,6 +167,42 @@ export class ProfileDistributor {
   }
 
   /**
+   * Get the next user for a SPECIFIC profile name
+   * Used when Artillery has already selected a profile via weighted scenarios
+   * to avoid double-weighting (Artillery picks scenario, then this would pick again)
+   */
+  getUserForProfile(profileName: string): UserContext | null {
+    // Find the profile by name
+    const profile = this.normalizedProfiles.find((p) => p.name === profileName);
+
+    if (!profile) {
+      // Profile not found, return null so caller can fall back to random selection
+      return null;
+    }
+
+    // Get user data (round-robin within profile)
+    const userData = this.getNextUserData(profile.name);
+
+    // Generate dynamic values
+    const generatedValues = this.generateValues(profile);
+
+    // Merge static variables
+    const variables = { ...profile.variables };
+
+    // Update stats
+    this.stats.totalUsers++;
+    this.stats.profileCounts[profile.name]++;
+    this.updatePercentages();
+
+    return {
+      profileName: profile.name,
+      userData,
+      variables,
+      generatedValues,
+    };
+  }
+
+  /**
    * Select a profile based on weighted random distribution
    */
   private selectProfile(): NormalizedProfile {

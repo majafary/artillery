@@ -147,23 +147,55 @@ export class ReportDataBuilder {
       }
     }
 
-    // Count connection errors - use v2 format OR v1 format, not both
+    // Count connection/network errors - use v2 format OR v1 format, not both
     // to avoid double-counting when Artillery provides both formats
+    // IMPORTANT: Only count actual network errors, not extraction/validation errors
+    // - Connection errors: ECONNREFUSED, ECONNRESET, ETIMEDOUT, socket hang up, etc.
+    // - NOT errors like "Failed capture or match" which are extraction errors
     let connectionErrors = 0;
     let foundV2Errors = false;
+
+    // Patterns that indicate actual connection/network errors
+    const networkErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'ENOTFOUND',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'socket hang up',
+      'connect ECONNREFUSED',
+      'ESOCKETTIMEDOUT',
+      'EPROTO',
+      'EPIPE',
+    ];
 
     // First try v2 format: counters['errors.*'] keys
     for (const [key, value] of Object.entries(counters)) {
       if (key.startsWith('errors.')) {
-        connectionErrors += value;
+        // Extract error message (everything after 'errors.')
+        const errorMessage = key.replace('errors.', '');
+        // Only count as connection error if it matches network error patterns
+        const isNetworkError = networkErrorPatterns.some(pattern =>
+          errorMessage.toUpperCase().includes(pattern.toUpperCase())
+        );
+        if (isNetworkError) {
+          connectionErrors += value;
+        }
         foundV2Errors = true;
       }
     }
 
     // Only use v1 format (aggregate.errors) if no v2 errors were found
     if (!foundV2Errors && aggregate.errors) {
-      for (const value of Object.values(aggregate.errors)) {
-        connectionErrors += value;
+      for (const [errorMessage, value] of Object.entries(aggregate.errors)) {
+        // Only count as connection error if it matches network error patterns
+        const isNetworkError = networkErrorPatterns.some(pattern =>
+          errorMessage.toUpperCase().includes(pattern.toUpperCase())
+        );
+        if (isNetworkError) {
+          connectionErrors += value;
+        }
       }
     }
 

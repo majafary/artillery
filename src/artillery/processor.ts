@@ -182,8 +182,32 @@ export function initialize(
 }
 
 /**
+ * Extract profile name from Artillery scenario name
+ * Scenario names have format: "${journeyName} - ${profileName}"
+ * Returns null if no profile name is found in the scenario name
+ */
+function extractProfileFromScenario(scenarioName: string): string | null {
+  if (!scenarioName) return null;
+
+  // Find the last occurrence of " - " which separates journey name from profile name
+  const separator = ' - ';
+  const lastIndex = scenarioName.lastIndexOf(separator);
+
+  if (lastIndex === -1) {
+    return null; // No profile in scenario name
+  }
+
+  return scenarioName.substring(lastIndex + separator.length);
+}
+
+/**
  * Set up user context for this virtual user
  * Called at the start of each scenario iteration
+ *
+ * IMPORTANT: When using multi-profile scenarios, Artillery selects a scenario
+ * based on weight. The scenario name contains the profile name.
+ * We extract this profile name and get user data from that SPECIFIC profile
+ * to avoid double-weighting (Artillery picks scenario, then getNextUser would pick again).
  */
 export function setupUser(
   context: ArtilleryContext,
@@ -195,7 +219,23 @@ export function setupUser(
 
   // Get user data from profile distributor
   if (vuState?.profileDistributor) {
-    const userContext = vuState.profileDistributor.getNextUser();
+    // Try to extract profile name from Artillery's selected scenario
+    // Scenario names have format: "${journeyName} - ${profileName}"
+    const scenarioName = context.scenario?.name;
+    const profileName = extractProfileFromScenario(scenarioName);
+
+    let userContext;
+
+    if (profileName) {
+      // Artillery has already selected a profile via weighted scenarios
+      // Get user data from that SPECIFIC profile to avoid double-weighting
+      userContext = vuState.profileDistributor.getUserForProfile(profileName);
+    }
+
+    // Fallback to random selection if profile extraction failed
+    if (!userContext) {
+      userContext = vuState.profileDistributor.getNextUser();
+    }
 
     // Merge user data into context
     context.vars.user = userContext.userData;
