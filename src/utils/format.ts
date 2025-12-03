@@ -89,6 +89,7 @@ export interface ProgressStats {
   statusCodes: Record<number, number>;
   vusers: number;
   rps: number;
+  profiles: Record<string, number>;
 }
 
 /**
@@ -99,6 +100,7 @@ export function formatProgressStats(stats: ProgressStats): {
   main: string;
   errorBreakdown?: string;
   statusLine?: string;
+  profileLine?: string;
 } {
   // Calculate HTTP errors from 4xx + 5xx status codes
   let httpErrors = 0;
@@ -158,5 +160,23 @@ export function formatProgressStats(stats: ProgressStats): {
     statusLine = breakdown;
   }
 
-  return { main, errorBreakdown, statusLine };
+  // Build profile breakdown if profiles exist
+  const profileEntries = Object.entries(stats.profiles);
+  let profileLine: string | undefined;
+
+  if (profileEntries.length > 0) {
+    const totalProfileUsers = profileEntries.reduce((sum, [, count]) => sum + count, 0);
+    const breakdown = profileEntries
+      .sort((a, b) => b[1] - a[1])  // Sort by count descending
+      .map(([name, count]) => {
+        const percentage = totalProfileUsers > 0
+          ? ((count / totalProfileUsers) * 100).toFixed(0)
+          : '0';
+        return `${name}: ${formatNumber(count)} (${percentage}%)`;
+      })
+      .join('  |  ');
+    profileLine = breakdown;
+  }
+
+  return { main, errorBreakdown, statusLine, profileLine };
 }

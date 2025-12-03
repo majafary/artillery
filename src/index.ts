@@ -235,7 +235,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
     }
 
     // Progress tracking state
-    const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, statusCodes: {}, vusers: 0, rps: 0 };
+    const stats: ProgressStats = { requests: 0, errors: 0, errorTypes: {}, statusCodes: {}, vusers: 0, rps: 0, profiles: {} };
     const startTime = Date.now();
     let currentPhase = '';
     let progressInterval: ReturnType<typeof setInterval> | null = null;
@@ -266,6 +266,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
         '',
         chalk.gray(`   ${progressStats.main}`),
         progressStats.statusLine ? chalk.cyan(`   HTTP: ${progressStats.statusLine}`) : '',
+        progressStats.profileLine ? chalk.magenta(`   Profiles: ${progressStats.profileLine}`) : '',
         progressStats.errorBreakdown ? chalk.red(`   ⚠️  ${progressStats.errorBreakdown}`) : '',
         currentPhase ? chalk.blue(`   Phase: ${currentPhase}`) : '',
         '',
@@ -311,6 +312,12 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
           // Track HTTP status codes - accumulate interval values
           const code = data.code as number;
           stats.statusCodes[code] = (stats.statusCodes[code] || 0) + (data.count as number);
+          break;
+        }
+        case 'profile': {
+          // Track profile distribution - accumulate interval values
+          const profileName = data.name as string;
+          stats.profiles[profileName] = (stats.profiles[profileName] || 0) + (data.count as number);
           break;
         }
         case 'complete':

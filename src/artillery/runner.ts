@@ -424,6 +424,18 @@ export class Runner extends EventEmitter {
       }
     }
 
+    // Profile counters (e.g., "journey.profile.admin: .............. 50")
+    if (line.includes('journey.profile.')) {
+      const match = line.match(/journey\.profile\.([^:]+):\s*\.+\s*(\d+)/);
+      if (match) {
+        this.emit('progress', {
+          type: 'profile',
+          name: match[1],
+          count: parseInt(match[2], 10),
+        });
+      }
+    }
+
     // All VUs finished
     if (line.includes('All VUs finished')) {
       this.emit('progress', {
