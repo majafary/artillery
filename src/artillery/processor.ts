@@ -2,6 +2,10 @@
  * Artillery Processor
  * Hook functions for Artillery's beforeRequest/afterResponse lifecycle
  * This is where conditional branching and data extraction happen
+ *
+ * IMPORTANT: All state is stored per-VU in context.vars to avoid race conditions.
+ * Artillery shares the processor module across all concurrent VUs, so module-level
+ * variables would cause race conditions when multiple VUs run simultaneously.
  */
 
 import type { EventEmitter } from 'events';
@@ -84,12 +88,83 @@ interface ArtilleryResponse {
 }
 
 /**
- * Processor state - initialized per scenario
+ * Per-VU state stored in context.vars
+ * Each VU gets its own initialized state to avoid race conditions
  */
-let journey: Journey | null = null;
-let flowEngine: FlowEngine | null = null;
-let dataExtractor: DataExtractor | null = null;
-let profileDistributor: ProfileDistributor | null = null;
+interface VUState {
+  journey: Journey;
+  flowEngine: FlowEngine;
+  profileDistributor: ProfileDistributor | null;
+}
+
+// Shared DataExtractor (stateless, thread-safe)
+let sharedDataExtractor: DataExtractor | null = null;
+function getDataExtractor(): DataExtractor {
+  if (!sharedDataExtractor) {
+    sharedDataExtractor = new DataExtractor();
+  }
+  return sharedDataExtractor;
+}
+
+// Shared ProfileDistributor (stateful but thread-safe via atomic operations)
+// This is initialized once from __profiles or __profileDistributor
+let sharedProfileDistributor: ProfileDistributor | null = null;
+let profileDistributorInitialized = false;
+
+/**
+ * Get or initialize the shared ProfileDistributor
+ * Thread-safe: only initializes once, subsequent calls return cached instance
+ */
+function getProfileDistributor(context: ArtilleryContext): ProfileDistributor | null {
+  if (profileDistributorInitialized) {
+    return sharedProfileDistributor;
+  }
+
+  // Initialize from context
+  if (context.vars.__profileDistributor) {
+    sharedProfileDistributor = context.vars.__profileDistributor as ProfileDistributor;
+  } else if (context.vars.__profiles) {
+    const profileConfig = unescapeTemplateMarkers(context.vars.__profiles) as import('../types/index.js').ProfileConfig;
+    sharedProfileDistributor = new ProfileDistributor(profileConfig);
+    sharedProfileDistributor.loadDataSync();
+  }
+
+  profileDistributorInitialized = true;
+  return sharedProfileDistributor;
+}
+
+/**
+ * Get or create VU-specific state from context
+ * This ensures each VU has its own journey and flowEngine instances
+ * to avoid race conditions during concurrent execution.
+ */
+function getVUState(context: ArtilleryContext): VUState | null {
+  // Check if already initialized for this VU
+  if (context.vars.__shieldVUState) {
+    return context.vars.__shieldVUState as VUState;
+  }
+
+  // Get journey data from Artillery config.variables
+  const journeyData = context.vars.__journey;
+  if (!journeyData) {
+    return null;
+  }
+
+  // Create VU-specific state
+  const journey = unescapeTemplateMarkers(journeyData) as Journey;
+  const flowEngine = new FlowEngine(journey);
+  const profileDistributor = getProfileDistributor(context);
+
+  const vuState: VUState = {
+    journey,
+    flowEngine,
+    profileDistributor,
+  };
+
+  // Store in context for this VU
+  context.vars.__shieldVUState = vuState;
+  return vuState;
+}
 
 /**
  * Initialize processor with journey and dependencies
@@ -101,54 +176,9 @@ export function initialize(
   events: EventEmitter,
   done: () => void
 ): void {
-  // Try to get journey from context (might not be available yet)
-  if (context.vars.__journey && !journey) {
-    journey = context.vars.__journey as Journey;
-    flowEngine = new FlowEngine(journey);
-  }
-
-  if (!dataExtractor) {
-    dataExtractor = new DataExtractor();
-  }
-
-  // Get profile distributor if available
-  if (context.vars.__profileDistributor && !profileDistributor) {
-    profileDistributor = context.vars.__profileDistributor as ProfileDistributor | null;
-  }
-
+  // Initialize VU state if possible (might not have journey yet)
+  getVUState(context);
   done();
-}
-
-/**
- * Ensure journey is initialized from context
- * Called at the start of scenario execution when config.variables are available
- * IMPORTANT: Template markers are escaped in the YAML to prevent Artillery from
- * processing {{...}} variables. We unescape them here to restore the original templates.
- */
-function ensureJourneyInitialized(context: ArtilleryContext): void {
-  if (!journey && context.vars.__journey) {
-    // Unescape template markers that were escaped in script-generator to prevent
-    // Artillery's template engine from processing them at YAML load time
-    journey = unescapeTemplateMarkers(context.vars.__journey) as Journey;
-    flowEngine = new FlowEngine(journey);
-  }
-  if (!dataExtractor) {
-    dataExtractor = new DataExtractor();
-  }
-  // Handle both __profileDistributor (instantiated) and __profiles (raw config)
-  if (!profileDistributor) {
-    if (context.vars.__profileDistributor) {
-      profileDistributor = context.vars.__profileDistributor as ProfileDistributor;
-    } else if (context.vars.__profiles) {
-      // Create ProfileDistributor from raw profiles config passed via script generator
-      // Note: loadDataSync() only works for inline data (profile.data), not file-based dataSource
-      // Also unescape any template markers in profile data
-      const profileConfig = unescapeTemplateMarkers(context.vars.__profiles) as import('../types/index.js').ProfileConfig;
-
-      profileDistributor = new ProfileDistributor(profileConfig);
-      profileDistributor.loadDataSync(); // Load inline data synchronously
-    }
-  }
 }
 
 /**
@@ -160,12 +190,12 @@ export function setupUser(
   events: EventEmitter,
   done: () => void
 ): void {
-  // Ensure journey is initialized (config.variables now available)
-  ensureJourneyInitialized(context);
+  // Ensure VU state is initialized
+  const vuState = getVUState(context);
 
   // Get user data from profile distributor
-  if (profileDistributor) {
-    const userContext = profileDistributor.getNextUser();
+  if (vuState?.profileDistributor) {
+    const userContext = vuState.profileDistributor.getNextUser();
 
     // Merge user data into context
     context.vars.user = userContext.userData;
@@ -200,13 +230,14 @@ export function beforeRequest(
   ee: EventEmitter,
   next: () => void
 ): void {
-  // Ensure journey is initialized
-  ensureJourneyInitialized(context);
-
-  if (!journey) {
+  // Get VU-specific state
+  const vuState = getVUState(context);
+  if (!vuState) {
     next();
     return;
   }
+
+  const { journey, flowEngine } = vuState;
 
   const stepId = requestParams.__stepId;
   if (!stepId) {
@@ -214,7 +245,7 @@ export function beforeRequest(
     return;
   }
 
-  const step = flowEngine?.getStep(stepId);
+  const step = flowEngine.getStep(stepId);
   if (!step) {
     next();
     return;
@@ -282,10 +313,16 @@ export function afterResponse(
   ee: EventEmitter,
   next: () => void
 ): void {
-  if (!journey || !flowEngine || !dataExtractor) {
+  // Get VU-specific state
+  const vuState = getVUState(context);
+  const dataExtractor = getDataExtractor();
+
+  if (!vuState) {
     next();
     return;
   }
+
+  const { flowEngine } = vuState;
 
   const stepId = requestParams.__stepId;
   if (!stepId) {
@@ -356,20 +393,24 @@ export function afterResponse(
  * Check if a step should execute based on flow state
  * Used by Artillery's ifTrue condition
  * IMPORTANT: This may be called BEFORE beforeScenario (setupUser), so we must
- * ensure journey is initialized from context.vars.__journey here.
+ * ensure VU state is initialized from context.vars.__journey here.
  */
 export function shouldExecuteStep(
   context: ArtilleryContext,
   stepId: string
 ): boolean {
-  // CRITICAL: Initialize journey from context - ifTrue is evaluated before beforeScenario
-  ensureJourneyInitialized(context);
+  // CRITICAL: Get VU state - ifTrue is evaluated before beforeScenario
+  const vuState = getVUState(context);
+  if (!vuState) {
+    return false;
+  }
 
+  const { journey } = vuState;
   const nextStep = context.vars.__nextStep as string | undefined;
   const executedSteps = (context.vars.__executedSteps as string[]) || [];
 
   // First step always executes
-  if (executedSteps.length === 0 && journey) {
+  if (executedSteps.length === 0) {
     const firstStep = journey.steps[0];
     return stepId === firstStep?.id;
   }
@@ -419,12 +460,15 @@ export function think(
   done: () => void
 ): void {
   const stepId = context.vars.__currentStepId as string;
-  if (!stepId || !journey) {
+  const vuState = getVUState(context);
+
+  if (!stepId || !vuState) {
     done();
     return;
   }
 
-  const step = flowEngine?.getStep(stepId);
+  const { journey, flowEngine } = vuState;
+  const step = flowEngine.getStep(stepId);
   const thinkTime = step?.thinkTime || journey.defaults?.thinkTime;
 
   if (!thinkTime) {

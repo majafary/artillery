@@ -147,16 +147,21 @@ export class ReportDataBuilder {
       }
     }
 
-    // Count connection errors from counters (v2 format: errors.* keys)
+    // Count connection errors - use v2 format OR v1 format, not both
+    // to avoid double-counting when Artillery provides both formats
     let connectionErrors = 0;
+    let foundV2Errors = false;
+
+    // First try v2 format: counters['errors.*'] keys
     for (const [key, value] of Object.entries(counters)) {
       if (key.startsWith('errors.')) {
         connectionErrors += value;
+        foundV2Errors = true;
       }
     }
 
-    // Also check legacy format
-    if (aggregate.errors) {
+    // Only use v1 format (aggregate.errors) if no v2 errors were found
+    if (!foundV2Errors && aggregate.errors) {
       for (const value of Object.values(aggregate.errors)) {
         connectionErrors += value;
       }
