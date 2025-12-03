@@ -138,7 +138,10 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
         options.profiles as string,
         dirname(journeyPath)
       );
-      profileConfig = (distributor as any).config;
+      // Use getConfigWithLoadedData() to get profiles with CSV data inlined
+      // This is needed because the Artillery processor uses synchronous loadDataSync()
+      // which cannot load file-based dataSources
+      profileConfig = distributor.getConfigWithLoadedData();
       console.log(chalk.green(`✓ Loaded ${profileConfig.profiles.length} profiles`));
 
       // Load profile-specific journeys
@@ -476,7 +479,10 @@ async function generateCommand(journeyPath: string, options: Record<string, unkn
         options.profiles as string,
         dirname(journeyPath)
       );
-      profileConfig = (distributor as any).config;
+      // Use getConfigWithLoadedData() to inline CSV data into profile config
+      // This is needed because the Artillery processor uses synchronous loadDataSync()
+      // which cannot load file-based dataSources
+      profileConfig = distributor.getConfigWithLoadedData();
 
       // Load profile-specific journeys
       const profileBasePath = dirname(options.profiles as string);

@@ -335,6 +335,34 @@ export class ProfileDistributor {
   }
 
   /**
+   * Get profile config with loaded data inlined
+   * Converts profiles with dataSource to profiles with inline data arrays
+   * This is needed for the Artillery processor which uses synchronous loadDataSync()
+   */
+  getConfigWithLoadedData(): ProfileConfig {
+    const profiles = this.config.profiles.map((profile) => {
+      const loadedData = this.userDataCache.get(profile.name);
+
+      // Create a new profile object with loaded data inlined
+      const newProfile = { ...profile };
+
+      // If we have loaded data, replace dataSource with inline data
+      if (loadedData && loadedData.length > 0) {
+        newProfile.data = loadedData;
+        // Remove dataSource since we now have inline data
+        delete newProfile.dataSource;
+      }
+
+      return newProfile;
+    });
+
+    return {
+      ...this.config,
+      profiles,
+    };
+  }
+
+  /**
    * Get target distribution (configured weights)
    */
   getTargetDistribution(): Record<string, number> {

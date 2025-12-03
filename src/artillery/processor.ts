@@ -144,6 +144,7 @@ function ensureJourneyInitialized(context: ArtilleryContext): void {
       // Note: loadDataSync() only works for inline data (profile.data), not file-based dataSource
       // Also unescape any template markers in profile data
       const profileConfig = unescapeTemplateMarkers(context.vars.__profiles) as import('../types/index.js').ProfileConfig;
+
       profileDistributor = new ProfileDistributor(profileConfig);
       profileDistributor.loadDataSync(); // Load inline data synchronously
     }
@@ -247,11 +248,15 @@ export function beforeRequest(
   // This tells Artillery to prepare a JSON request. Here in beforeRequest, we replace the empty body
   // with properly interpolated values from the journey definition (stored in config.variables.__journey).
   // This ensures variables like {{user.email}} are interpolated with actual user data loaded in setupUser.
+  // NOTE: We must set BOTH requestParams.json AND requestParams.body because Artillery serializes
+  // the json to body BEFORE calling beforeRequest. Simply modifying json won't update the actual body.
   if (step.request.json) {
     // Deep clone and interpolate the original step body from journey definition
     const originalBody = JSON.parse(JSON.stringify(step.request.json));
     const interpolatedBody = interpolateObject(originalBody, interpolationContext);
     requestParams.json = interpolatedBody;
+    // Also set the stringified body to ensure Artillery sends the correct payload
+    requestParams.body = JSON.stringify(interpolatedBody);
   }
 
   // Interpolate string body from journey definition

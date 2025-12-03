@@ -105,7 +105,9 @@ export class Runner extends EventEmitter {
           this.config.profiles.path,
           dirname(this.config.journey.path)
         );
-        profiles = (distributor as any).config;
+        // Use getConfigWithLoadedData() to get profiles with CSV data inlined
+        // This is critical because the processor's loadDataSync() cannot load file-based dataSources
+        profiles = distributor.getConfigWithLoadedData();
       }
 
       // Generate Artillery script
