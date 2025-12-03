@@ -287,30 +287,30 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
           currentPhase = '';
           break;
         case 'requests':
-          stats.requests = data.count as number;
+          stats.requests += data.count as number;  // Accumulate interval values
           break;
         case 'rps':
-          stats.rps = data.count as number;
+          stats.rps = data.count as number;  // RPS is a rate, not cumulative
           break;
         case 'vusers':
-          stats.vusers = data.count as number;
+          stats.vusers += data.count as number;  // Accumulate interval values
           break;
         case 'errors': {
-          // Track error types for breakdown display
+          // Track error types - accumulate interval values
           const errorType = data.errorType as string;
           if (errorType) {
-            stats.errorTypes[errorType] = data.count as number;
+            stats.errorTypes[errorType] = (stats.errorTypes[errorType] || 0) + (data.count as number);
             // Recalculate total from all error types
             stats.errors = Object.values(stats.errorTypes).reduce((a, b) => a + b, 0);
           } else {
-            stats.errors = data.count as number;
+            stats.errors += data.count as number;
           }
           break;
         }
         case 'status-code': {
-          // Track HTTP status codes for visibility
+          // Track HTTP status codes - accumulate interval values
           const code = data.code as number;
-          stats.statusCodes[code] = data.count as number;
+          stats.statusCodes[code] = (stats.statusCodes[code] || 0) + (data.count as number);
           break;
         }
         case 'complete':
