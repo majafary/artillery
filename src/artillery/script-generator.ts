@@ -122,7 +122,8 @@ export class ScriptGenerator {
       phases: this.buildPhases(),
       processor: './processor.cjs',
       plugins: {
-        'shield-artillery': {
+        // Use local path so Artillery can find the plugin
+        './plugin.cjs': {
           enabled: true,
           stepMetrics: true,
           reportPath: './enhanced-report.json',

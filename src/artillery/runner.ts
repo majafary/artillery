@@ -134,9 +134,11 @@ export class Runner extends EventEmitter {
       const scriptPath = join(this.tempDir, 'test.yml');
       // Use .cjs extension so Node treats it as CommonJS (project uses "type": "module")
       const processorPath = join(this.tempDir, 'processor.cjs');
+      const pluginPath = join(this.tempDir, 'plugin.cjs');
 
       // Get absolute path to the processor module (in same dir as runner)
       const processorModulePath = join(__dirname, 'processor.js');
+      const pluginModulePath = join(__dirname, 'plugin.js');
 
       // Generate debug log path if debug mode is enabled
       const debugLogPath = this.options.debug
@@ -145,6 +147,9 @@ export class Runner extends EventEmitter {
 
       await writeFile(scriptPath, script.yaml);
       await writeFile(processorPath, generator.generateProcessor(processorModulePath, debugLogPath));
+      // Generate CommonJS wrapper for the plugin (Artillery needs CommonJS)
+      const pluginWrapper = this.generatePluginWrapper(pluginModulePath);
+      await writeFile(pluginPath, pluginWrapper);
 
       this.emit('generated', { scriptPath, processorPath });
 
@@ -327,6 +332,26 @@ export class Runner extends EventEmitter {
       rps: { mean: 0, max: 0 },
       codes: {},
     };
+  }
+
+  /**
+   * Generate CommonJS wrapper for the plugin
+   * Artillery requires CommonJS plugins, but our plugin is ESM
+   */
+  private generatePluginWrapper(pluginModulePath: string): string {
+    // Escape backslashes for Windows paths
+    const escapedPath = pluginModulePath.replace(/\\/g, '\\\\');
+
+    return `/**
+ * Generated Artillery Plugin Wrapper
+ * CommonJS wrapper for the ESM plugin module
+ */
+
+const pluginModule = require('${escapedPath}');
+
+// Re-export the Plugin class for Artillery
+module.exports = pluginModule;
+`;
   }
 
   /**

@@ -51,7 +51,8 @@ class ShieldArtilleryPlugin {
   constructor(script: ArtilleryScript, events: EventEmitter) {
     this.script = script;
     this.events = events;
-    this.config = script.config.plugins?.['shield-artillery'] || { enabled: true };
+    // Plugin is loaded via local path './plugin.cjs'
+    this.config = script.config.plugins?.['./plugin.cjs'] || { enabled: true };
 
     if (!this.config.enabled) {
       return;
@@ -368,5 +369,5 @@ function mapReplacer(key: string, value: unknown): unknown {
   return value;
 }
 
-// Export for Artillery plugin system
-module.exports = { Plugin: ShieldArtilleryPlugin };
+// Export for Artillery plugin system (ESM export, wrapper converts to CommonJS)
+export { ShieldArtilleryPlugin as Plugin };
