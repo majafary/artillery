@@ -24,6 +24,8 @@ export interface BuilderOptions {
   environment: string;
   thresholds?: ThresholdsConfig;
   enhancedReportPath?: string;
+  /** Enable debug logging for endpoint-to-step mapping */
+  debug?: boolean;
 }
 
 export class ReportDataBuilder {
@@ -213,6 +215,36 @@ export class ReportDataBuilder {
   }
 
   /**
+   * Normalize a URL path for matching
+   * Handles: template variables ({{var}}), full URLs, leading slashes
+   */
+  private normalizeUrlPath(url: string): string {
+    // Remove template variables like {{baseUrl}}, {{target}}
+    let path = url.replace(/\{\{[^}]+\}\}/g, '');
+
+    // If it's a full URL, extract the pathname
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      try {
+        path = new URL(path).pathname;
+      } catch {
+        // If URL parsing fails, continue with the path as-is
+      }
+    }
+
+    // Ensure leading slash
+    if (path && !path.startsWith('/')) {
+      path = '/' + path;
+    }
+
+    // Remove trailing slash (except for root)
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+
+    return path;
+  }
+
+  /**
    * Build step metrics from Artillery output or enhanced report
    * Extracts step-level metrics from Artillery's counters/histograms
    * Also maps metrics-by-endpoint plugin data to journey steps by matching URLs
@@ -223,13 +255,21 @@ export class ReportDataBuilder {
   ): Map<string, StepMetrics> {
     const metrics = new Map<string, StepMetrics>();
 
-    // Build a map of endpoint URL -> step ID for metrics-by-endpoint mapping
+    // Build a map of normalized endpoint URL -> step ID for metrics-by-endpoint mapping
     const endpointToStep = new Map<string, string>();
+    const stepUrlMap: Record<string, string> = {}; // For debug output
+
     for (const step of this.options.journey.steps) {
-      // Normalize the URL path (handle both full URLs and paths)
-      const url = step.request.url;
-      const path = url.startsWith('http') ? new URL(url).pathname : url;
-      endpointToStep.set(path, step.id);
+      const normalizedPath = this.normalizeUrlPath(step.request.url);
+      endpointToStep.set(normalizedPath, step.id);
+      stepUrlMap[step.id] = `${step.request.url} -> ${normalizedPath}`;
+    }
+
+    if (this.options.debug) {
+      console.log('\n[DEBUG] Step URL mapping:');
+      for (const [stepId, mapping] of Object.entries(stepUrlMap)) {
+        console.log(`  ${stepId}: ${mapping}`);
+      }
     }
 
     // Initialize metrics for all journey steps
@@ -293,12 +333,29 @@ export class ReportDataBuilder {
 
       // Fall back to metrics-by-endpoint plugin data if custom step metrics aren't available
       // This maps endpoint paths to journey steps
+      const endpointsFound: string[] = []; // For debug output
+      const unmatchedEndpoints: string[] = []; // For debug output
+
       for (const [key, count] of Object.entries(counters)) {
         // Parse plugins.metrics-by-endpoint.{endpoint}.codes.{code}
-        const endpointStatusMatch = key.match(/^plugins\.metrics-by-endpoint\.([^.]+)\.codes\.(\d+)$/);
+        const endpointStatusMatch = key.match(/^plugins\.metrics-by-endpoint\.(.+)\.codes\.(\d+)$/);
         if (endpointStatusMatch) {
           const [, endpoint, statusCode] = endpointStatusMatch;
-          const stepId = endpointToStep.get(endpoint);
+          const normalizedEndpoint = this.normalizeUrlPath(endpoint);
+
+          // Track endpoints for debug output
+          if (!endpointsFound.includes(normalizedEndpoint)) {
+            endpointsFound.push(normalizedEndpoint);
+          }
+
+          // Try to match with normalized path
+          let stepId = endpointToStep.get(normalizedEndpoint);
+
+          // Also try without leading slash as fallback
+          if (!stepId && normalizedEndpoint.startsWith('/')) {
+            stepId = endpointToStep.get(normalizedEndpoint.slice(1));
+          }
+
           if (stepId) {
             const stepMetrics = metrics.get(stepId);
             if (stepMetrics && stepMetrics.requestCount === 0) {
@@ -313,6 +370,26 @@ export class ReportDataBuilder {
                 stepMetrics.errorCount += count;
               }
             }
+          } else if (!unmatchedEndpoints.includes(normalizedEndpoint)) {
+            unmatchedEndpoints.push(normalizedEndpoint);
+          }
+        }
+      }
+
+      if (this.options.debug) {
+        console.log('\n[DEBUG] Artillery endpoints found:');
+        for (const endpoint of endpointsFound) {
+          const matched = endpointToStep.has(endpoint) ? '(matched)' : '(unmatched)';
+          console.log(`  ${endpoint} ${matched}`);
+        }
+        if (unmatchedEndpoints.length > 0) {
+          console.log('\n[DEBUG] Unmatched endpoints (no step mapping):');
+          for (const endpoint of unmatchedEndpoints) {
+            console.log(`  ${endpoint}`);
+          }
+          console.log('\n[DEBUG] Available step paths:');
+          for (const [path, stepId] of endpointToStep) {
+            console.log(`  ${path} -> ${stepId}`);
           }
         }
       }
@@ -322,7 +399,16 @@ export class ReportDataBuilder {
         const endpointHistMatch = key.match(/^plugins\.metrics-by-endpoint\.response_time\.(.+)$/);
         if (endpointHistMatch && hist) {
           const [, endpoint] = endpointHistMatch;
-          const stepId = endpointToStep.get(endpoint);
+          const normalizedEndpoint = this.normalizeUrlPath(endpoint);
+
+          // Try to match with normalized path
+          let stepId = endpointToStep.get(normalizedEndpoint);
+
+          // Also try without leading slash as fallback
+          if (!stepId && normalizedEndpoint.startsWith('/')) {
+            stepId = endpointToStep.get(normalizedEndpoint.slice(1));
+          }
+
           if (stepId) {
             const stepMetrics = metrics.get(stepId);
             // Only use if latency hasn't been set yet
