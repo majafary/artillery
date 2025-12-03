@@ -337,7 +337,7 @@ export class ReportDataBuilder {
       const unmatchedEndpoints: string[] = []; // For debug output
 
       for (const [key, count] of Object.entries(counters)) {
-        // Parse plugins.metrics-by-endpoint.{endpoint}.codes.{code}
+        // Parse plugins.metrics-by-endpoint.{endpoint}.codes.{code} for HTTP status codes
         const endpointStatusMatch = key.match(/^plugins\.metrics-by-endpoint\.(.+)\.codes\.(\d+)$/);
         if (endpointStatusMatch) {
           const [, endpoint, statusCode] = endpointStatusMatch;
@@ -358,8 +358,7 @@ export class ReportDataBuilder {
 
           if (stepId) {
             const stepMetrics = metrics.get(stepId);
-            if (stepMetrics && stepMetrics.requestCount === 0) {
-              // Only use endpoint metrics if step metrics weren't populated
+            if (stepMetrics) {
               const code = parseInt(statusCode, 10);
               const existingCount = stepMetrics.statusCodes.get(code) || 0;
               stepMetrics.statusCodes.set(code, existingCount + count);
@@ -369,6 +368,39 @@ export class ReportDataBuilder {
               } else {
                 stepMetrics.errorCount += count;
               }
+            }
+          } else if (!unmatchedEndpoints.includes(normalizedEndpoint)) {
+            unmatchedEndpoints.push(normalizedEndpoint);
+          }
+        }
+
+        // Parse plugins.metrics-by-endpoint.{endpoint}.errors.{errorType} for connection errors
+        const endpointErrorMatch = key.match(/^plugins\.metrics-by-endpoint\.(.+)\.errors\.(.+)$/);
+        if (endpointErrorMatch) {
+          const [, endpoint, errorType] = endpointErrorMatch;
+          const normalizedEndpoint = this.normalizeUrlPath(endpoint);
+
+          // Track endpoints for debug output
+          if (!endpointsFound.includes(normalizedEndpoint)) {
+            endpointsFound.push(normalizedEndpoint);
+          }
+
+          // Try to match with normalized path
+          let stepId = endpointToStep.get(normalizedEndpoint);
+
+          // Also try without leading slash as fallback
+          if (!stepId && normalizedEndpoint.startsWith('/')) {
+            stepId = endpointToStep.get(normalizedEndpoint.slice(1));
+          }
+
+          if (stepId) {
+            const stepMetrics = metrics.get(stepId);
+            if (stepMetrics) {
+              stepMetrics.requestCount += count;
+              stepMetrics.errorCount += count;
+              // Track error message
+              const existingErrorCount = stepMetrics.errorMessages.get(errorType) || 0;
+              stepMetrics.errorMessages.set(errorType, existingErrorCount + count);
             }
           } else if (!unmatchedEndpoints.includes(normalizedEndpoint)) {
             unmatchedEndpoints.push(normalizedEndpoint);
