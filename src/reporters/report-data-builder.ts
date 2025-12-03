@@ -215,12 +215,22 @@ export class ReportDataBuilder {
   /**
    * Build step metrics from Artillery output or enhanced report
    * Extracts step-level metrics from Artillery's counters/histograms
+   * Also maps metrics-by-endpoint plugin data to journey steps by matching URLs
    */
   private buildStepMetrics(
     enhancedData: EnhancedReportData | null,
     aggregate?: ArtilleryAggregate
   ): Map<string, StepMetrics> {
     const metrics = new Map<string, StepMetrics>();
+
+    // Build a map of endpoint URL -> step ID for metrics-by-endpoint mapping
+    const endpointToStep = new Map<string, string>();
+    for (const step of this.options.journey.steps) {
+      // Normalize the URL path (handle both full URLs and paths)
+      const url = step.request.url;
+      const path = url.startsWith('http') ? new URL(url).pathname : url;
+      endpointToStep.set(path, step.id);
+    }
 
     // Initialize metrics for all journey steps
     for (const step of this.options.journey.steps) {
@@ -241,7 +251,7 @@ export class ReportDataBuilder {
       const counters = aggregate.counters || {};
       const histograms = aggregate.histograms || {};
 
-      // Parse step.{stepId}.status.{code} counters
+      // First try custom step.{stepId}.* metrics (if processor emits them)
       for (const [key, count] of Object.entries(counters)) {
         const statusMatch = key.match(/^step\.([^.]+)\.status\.(\d+)$/);
         if (statusMatch) {
@@ -280,9 +290,60 @@ export class ReportDataBuilder {
           }
         }
       }
+
+      // Fall back to metrics-by-endpoint plugin data if custom step metrics aren't available
+      // This maps endpoint paths to journey steps
+      for (const [key, count] of Object.entries(counters)) {
+        // Parse plugins.metrics-by-endpoint.{endpoint}.codes.{code}
+        const endpointStatusMatch = key.match(/^plugins\.metrics-by-endpoint\.([^.]+)\.codes\.(\d+)$/);
+        if (endpointStatusMatch) {
+          const [, endpoint, statusCode] = endpointStatusMatch;
+          const stepId = endpointToStep.get(endpoint);
+          if (stepId) {
+            const stepMetrics = metrics.get(stepId);
+            if (stepMetrics && stepMetrics.requestCount === 0) {
+              // Only use endpoint metrics if step metrics weren't populated
+              const code = parseInt(statusCode, 10);
+              const existingCount = stepMetrics.statusCodes.get(code) || 0;
+              stepMetrics.statusCodes.set(code, existingCount + count);
+              stepMetrics.requestCount += count;
+              if (code >= 200 && code < 300) {
+                stepMetrics.successCount += count;
+              } else {
+                stepMetrics.errorCount += count;
+              }
+            }
+          }
+        }
+      }
+
+      // Parse plugins.metrics-by-endpoint.response_time.{endpoint} histograms
+      for (const [key, hist] of Object.entries(histograms)) {
+        const endpointHistMatch = key.match(/^plugins\.metrics-by-endpoint\.response_time\.(.+)$/);
+        if (endpointHistMatch && hist) {
+          const [, endpoint] = endpointHistMatch;
+          const stepId = endpointToStep.get(endpoint);
+          if (stepId) {
+            const stepMetrics = metrics.get(stepId);
+            // Only use if latency hasn't been set yet
+            if (stepMetrics && stepMetrics.latency.mean === 0) {
+              stepMetrics.latency = {
+                min: hist.min || 0,
+                max: hist.max || 0,
+                mean: Math.round(hist.mean || 0),
+                median: hist.median || hist.p50 || 0,
+                p90: hist.p90 || 0,
+                p95: hist.p95 || 0,
+                p99: hist.p99 || 0,
+                stdDev: 0,
+              };
+            }
+          }
+        }
+      }
     }
 
-    // Override with enhanced data if available (more accurate)
+    // Override with enhanced data if available (most accurate)
     if (enhancedData?.stepMetrics) {
       for (const [stepId, data] of Object.entries(enhancedData.stepMetrics)) {
         metrics.set(stepId, {
