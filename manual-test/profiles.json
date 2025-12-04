@@ -1,0 +1,18 @@
+{
+  "id": "ciam-test-users",
+  "name": "CIAM Test User Distribution",  
+  "profiles": [
+    {
+      "name": "profile-alpha",
+      "weight": 50,
+      "journey": "./journey.json",
+      "dataSource": "./data/normal-users.csv"
+    },
+    {
+      "name": "profile-beta",
+      "weight": 50,
+      "journey": "./journey.json",
+      "dataSource": "./data/normal-users.csv"
+    }
+  ]
+}

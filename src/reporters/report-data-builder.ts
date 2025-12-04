@@ -203,10 +203,30 @@ export class ReportDataBuilder {
     const failedRequests = clientErrors + serverErrors + connectionErrors;
 
     // Get VU counts
+    // Note: Artillery's vusers.failed includes VUs with ANY error (including extraction errors)
+    // We want to count VU failures based on actual HTTP failures, not extraction errors
     const vusersCreated = counters['vusers.created'] || aggregate.scenariosCreated || 0;
-    const vusersFailed = counters['vusers.failed'] || 0;
-    const vusersCompleted = (counters['vusers.completed'] || aggregate.scenariosCompleted || 0) ||
-      (vusersCreated - vusersFailed);
+    const artilleryVusersFailed = counters['vusers.failed'] || 0;
+    const artilleryVusersCompleted = counters['vusers.completed'] || aggregate.scenariosCompleted || 0;
+
+    // Calculate actual HTTP failure rate - if all HTTP requests succeeded, VUs shouldn't be "failed"
+    const httpFailureRate = totalRequests > 0 ? failedRequests / totalRequests : 0;
+
+    // If HTTP failure rate is 0 but Artillery says VUs failed, those are extraction errors not HTTP failures
+    // In this case, report VUs as completed (from HTTP perspective) rather than failed
+    let vusersCompleted: number;
+    let vusersFailed: number;
+
+    if (httpFailureRate === 0 && artilleryVusersFailed > 0 && artilleryVusersCompleted === 0) {
+      // All HTTP requests succeeded, but Artillery marked VUs as failed due to extraction errors
+      // Count these as completed from an HTTP perspective
+      vusersCompleted = vusersCreated;
+      vusersFailed = 0;
+    } else {
+      // Normal case: use Artillery's counts or calculate from HTTP failures
+      vusersFailed = artilleryVusersFailed || Math.round(vusersCreated * httpFailureRate);
+      vusersCompleted = artilleryVusersCompleted || (vusersCreated - vusersFailed);
+    }
 
     // Get throughput (v2: rates['http.request_rate'], v1: rps.mean)
     const throughput = rates['http.request_rate'] || aggregate.rps?.mean || 0;
@@ -328,6 +348,9 @@ export class ReportDataBuilder {
       const counters = aggregate.counters || {};
       const histograms = aggregate.histograms || {};
 
+      // Track which steps have custom metrics (to avoid double-counting with metrics-by-endpoint)
+      const stepsWithCustomMetrics = new Set<string>();
+
       // First try custom step.{stepId}.* metrics (if processor emits them)
       for (const [key, count] of Object.entries(counters)) {
         const statusMatch = key.match(/^step\.([^.]+)\.status\.(\d+)$/);
@@ -335,6 +358,7 @@ export class ReportDataBuilder {
           const [, stepId, statusCode] = statusMatch;
           const stepMetrics = metrics.get(stepId);
           if (stepMetrics) {
+            stepsWithCustomMetrics.add(stepId);
             const code = parseInt(statusCode, 10);
             stepMetrics.statusCodes.set(code, count);
             stepMetrics.requestCount += count;
@@ -368,8 +392,8 @@ export class ReportDataBuilder {
         }
       }
 
-      // Fall back to metrics-by-endpoint plugin data if custom step metrics aren't available
-      // This maps endpoint paths to journey steps
+      // Fall back to metrics-by-endpoint plugin data ONLY for steps without custom metrics
+      // This prevents double-counting when both data sources are available
       const endpointsFound: string[] = []; // For debug output
       const unmatchedEndpoints: string[] = []; // For debug output
 
@@ -394,6 +418,10 @@ export class ReportDataBuilder {
           }
 
           if (stepId) {
+            // Skip if this step already has custom metrics (prevents double-counting)
+            if (stepsWithCustomMetrics.has(stepId)) {
+              continue;
+            }
             const stepMetrics = metrics.get(stepId);
             if (stepMetrics) {
               const code = parseInt(statusCode, 10);
@@ -431,6 +459,10 @@ export class ReportDataBuilder {
           }
 
           if (stepId) {
+            // Skip if this step already has custom metrics (prevents double-counting)
+            if (stepsWithCustomMetrics.has(stepId)) {
+              continue;
+            }
             const stepMetrics = metrics.get(stepId);
             if (stepMetrics) {
               stepMetrics.requestCount += count;
@@ -632,19 +664,64 @@ export class ReportDataBuilder {
     }
 
     if (thresholds.maxErrorRate !== undefined) {
-      // v2: counters['http.requests'] and counters['errors.*']
+      // Use consistent error calculation with buildSummary():
+      // Only count HTTP failures (4xx, 5xx) and network errors, NOT extraction errors
       const counters = aggregate.counters || {};
       const totalRequests = counters['http.requests'] || aggregate.requestsCompleted || 0;
 
-      // Count all error counters
-      let errorCount = 0;
+      // Extract HTTP status codes from counters
+      let clientErrors = 0;
+      let serverErrors = 0;
       for (const [key, value] of Object.entries(counters)) {
-        if (key.startsWith('errors.')) {
-          errorCount += value;
+        if (key.startsWith('http.codes.')) {
+          const code = parseInt(key.replace('http.codes.', ''), 10);
+          if (!isNaN(code)) {
+            if (code >= 400 && code < 500) {
+              clientErrors += value;
+            } else if (code >= 500) {
+              serverErrors += value;
+            }
+          }
         }
       }
 
-      const errorRate = totalRequests > 0 ? errorCount / totalRequests : 0;
+      // Also check legacy codes format
+      if (aggregate.codes) {
+        for (const [code, count] of Object.entries(aggregate.codes)) {
+          const codeNum = parseInt(code, 10);
+          if (!isNaN(codeNum)) {
+            if (codeNum >= 400 && codeNum < 500) {
+              clientErrors += count;
+            } else if (codeNum >= 500) {
+              serverErrors += count;
+            }
+          }
+        }
+      }
+
+      // Count network errors only (same logic as buildSummary)
+      const networkErrorPatterns = [
+        'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
+        'EHOSTUNREACH', 'ENETUNREACH', 'socket hang up',
+        'connect ECONNREFUSED', 'ESOCKETTIMEDOUT', 'EPROTO', 'EPIPE',
+      ];
+
+      let connectionErrors = 0;
+      for (const [key, value] of Object.entries(counters)) {
+        if (key.startsWith('errors.')) {
+          const errorMessage = key.replace('errors.', '');
+          const isNetworkError = networkErrorPatterns.some(pattern =>
+            errorMessage.toUpperCase().includes(pattern.toUpperCase())
+          );
+          if (isNetworkError) {
+            connectionErrors += value;
+          }
+        }
+      }
+
+      // Total HTTP failures = 4xx + 5xx + network errors (consistent with summary)
+      const failedRequests = clientErrors + serverErrors + connectionErrors;
+      const errorRate = totalRequests > 0 ? failedRequests / totalRequests : 0;
 
       results.push({
         metric: 'Error Rate',

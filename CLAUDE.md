@@ -1,5 +1,14 @@
 # Claude Code Guidelines
 
+## Project-Specific Rules
+
+### Module System Awareness
+
+- This project uses ES Modules (`"type": "module"` in package.json)
+- When creating standalone Node.js scripts that use CommonJS (`require()`), use the `.cjs` extension
+- Example: `server.cjs` instead of `server.js` for CommonJS scripts
+- Always check package.json before creating JS files to determine the module system
+
 ## Core Quality Rules
 
 ### No Patch Work

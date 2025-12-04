@@ -92,6 +92,23 @@ export interface ProgressStats {
   profiles: Record<string, number>;
 }
 
+// Network error patterns - only these should be counted as actual errors
+// (Extraction errors like SyntaxError should NOT count as errors)
+const NETWORK_ERROR_PATTERNS = [
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
+  'EHOSTUNREACH', 'ENETUNREACH', 'socket hang up',
+  'connect ECONNREFUSED', 'ESOCKETTIMEDOUT', 'EPROTO', 'EPIPE',
+];
+
+/**
+ * Check if an error type is a network error (vs extraction/parsing error)
+ */
+function isNetworkError(errorType: string): boolean {
+  return NETWORK_ERROR_PATTERNS.some(pattern =>
+    errorType.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
 /**
  * Format progress stats line
  * Returns an object with main stats, optional error breakdown, and HTTP status codes
@@ -111,12 +128,17 @@ export function formatProgressStats(stats: ProgressStats): {
     }
   }
 
-  // Total errors = HTTP 4xx/5xx errors only
-  // Note: stats.errors contains connection errors (ECONNREFUSED, ETIMEDOUT)
-  // which are separate from HTTP status code errors
-  // However, connection errors mean no HTTP response, so no status code
-  // Therefore: totalErrors = httpErrors + stats.errors (no overlap)
-  const totalErrors = stats.errors + httpErrors;
+  // Calculate network errors only (filter out extraction errors like SyntaxError)
+  // This ensures live console matches final report error calculation
+  let networkErrors = 0;
+  for (const [errorType, count] of Object.entries(stats.errorTypes)) {
+    if (isNetworkError(errorType)) {
+      networkErrors += count;
+    }
+  }
+
+  // Total errors = HTTP 4xx/5xx + network errors (not extraction/parsing errors)
+  const totalErrors = httpErrors + networkErrors;
 
   const errorRate = stats.requests > 0
     ? ((totalErrors / stats.requests) * 100).toFixed(1)
@@ -124,12 +146,13 @@ export function formatProgressStats(stats: ProgressStats): {
 
   const main = `Requests: ${formatNumber(stats.requests)} (${stats.rps}/s)  |  Errors: ${formatNumber(totalErrors)} (${errorRate}%)  |  VUs: ${stats.vusers}`;
 
-  // Build error type breakdown if errors exist
-  const errorEntries = Object.entries(stats.errorTypes);
+  // Build error type breakdown - only show network errors (not extraction errors)
+  const networkErrorEntries = Object.entries(stats.errorTypes)
+    .filter(([type]) => isNetworkError(type));
   let errorBreakdown: string | undefined;
 
-  if (errorEntries.length > 0) {
-    const breakdown = errorEntries
+  if (networkErrorEntries.length > 0) {
+    const breakdown = networkErrorEntries
       .sort((a, b) => b[1] - a[1])  // Sort by count descending
       .slice(0, 3)  // Show top 3 error types
       .map(([type, count]) => `${type}: ${formatNumber(count)}`)

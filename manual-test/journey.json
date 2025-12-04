@@ -1,0 +1,44 @@
+{
+  "id": "simple-login",
+  "name": "Simple Login - Bound Device",
+  "description": "Login flow for users with already-bound devices (no MFA required)",
+  "version": "1.0.0",
+  "defaults": {
+    "headers": {
+      "Content-Type": "application/json",
+      "API-Key": "test-api-key-12345"
+    },
+    "timeout": 10000
+  },
+  "steps": [
+    {
+      "id": "login",
+      "name": "Login with Bound Device",
+      "request": {
+        "method": "POST",
+        "url": "/v1/login",
+        "json": {
+          "username": "{{user.username}}",
+          "password": "{{user.password}}"
+        },
+        "expect": {
+          "statusCode": 200
+        }
+      },
+      "extract": [
+        {
+          "path": "$.access_token",
+          "as": "accessToken"
+        },
+        {
+          "path": "$.refresh_token",
+          "as": "refreshToken"
+        },
+        {
+          "path": "$.response_type_code",
+          "as": "responseCode"
+        }
+      ]
+    }
+  ]
+}
