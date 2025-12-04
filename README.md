@@ -693,14 +693,20 @@ interface EnvironmentConfig {
     phases: Array<{
       name?: string;             // Phase name
       duration: string;          // Duration (e.g., "1m", "30s")
-      arrivalRate: number;       // Requests per second
-      rampTo?: number;           // Ramp to this rate
+      arrivalRate?: number;      // VUs per second (use this OR arrivalCount)
+      arrivalCount?: number;     // Fixed number of VUs for the phase
+      rampTo?: number;           // Ramp to this rate (with arrivalRate)
+      maxVusers?: number;        // Maximum concurrent VUs
+      pause?: string;            // Pause between phases (e.g., "10s")
     }>;
   };
   thresholds?: {
+    p50ResponseTime?: number;    // p50 (median) latency threshold in ms
     p95ResponseTime?: number;    // p95 latency threshold in ms
     p99ResponseTime?: number;    // p99 latency threshold in ms
+    maxResponseTime?: number;    // Maximum response time threshold in ms
     maxErrorRate?: number;       // Max error rate (0.01 = 1%)
+    minThroughput?: number;      // Minimum requests per second
   };
   http?: {
     pool?: number;               // Connection pool size

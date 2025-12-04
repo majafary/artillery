@@ -70,6 +70,7 @@ export interface ArtilleryPhase {
   name?: string;
   duration: string | number;
   arrivalRate?: number;
+  arrivalCount?: number;
   rampTo?: number;
   maxVusers?: number;
   pause?: string | number;
@@ -203,6 +204,7 @@ export class ScriptGenerator {
 
       if (phase.name) artilleryPhase.name = phase.name;
       if (phase.arrivalRate) artilleryPhase.arrivalRate = phase.arrivalRate;
+      if (phase.arrivalCount) artilleryPhase.arrivalCount = phase.arrivalCount;
       if (phase.rampTo) artilleryPhase.rampTo = phase.rampTo;
       if (phase.maxVusers) artilleryPhase.maxVusers = phase.maxVusers;
       if (phase.pause) artilleryPhase.pause = phase.pause;

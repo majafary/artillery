@@ -25,6 +25,7 @@ export interface LoadPhase {
   name?: string;
   duration: string;
   arrivalRate?: number;
+  arrivalCount?: number;
   rampTo?: number;
   maxVusers?: number;
   pause?: string;

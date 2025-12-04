@@ -216,9 +216,14 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       phases.forEach((phase, i) => {
         const phaseName = phase.name || `Phase ${i + 1}`;
         const duration = typeof phase.duration === 'string' ? phase.duration : `${phase.duration}ms`;
-        const rate = phase.rampTo
-          ? `${phase.arrivalRate}→${phase.rampTo} req/s`
-          : `${phase.arrivalRate} req/s`;
+        let rate: string;
+        if (phase.arrivalCount) {
+          rate = `${phase.arrivalCount} VUs total`;
+        } else if (phase.rampTo) {
+          rate = `${phase.arrivalRate}→${phase.rampTo} req/s`;
+        } else {
+          rate = `${phase.arrivalRate} req/s`;
+        }
         console.log(chalk.gray(`   ${phaseName.padEnd(12)} - ${duration.padEnd(6)} @ ${rate}`));
       });
       console.log('');
