@@ -9,6 +9,14 @@
 - Example: `server.cjs` instead of `server.js` for CommonJS scripts
 - Always check package.json before creating JS files to determine the module system
 
+### Testing Workflow
+
+- **Preferred Test Setup**: Always use the existing mock server and test command when testing features
+- **Mock Server**: `node ./mock-server/server/server.cjs`
+- **Test Command**: `node dist/index.js run ./examples/mjafary/journey.json -e ./examples/mjafary/environments/dev-10.env.json -p ./examples/mjafary/profiles.json -o ./tmp-reports`
+- **Avoid Creating New Test Setups**: Don't create new test environments or mock servers unless explicitly required
+- **Build Before Testing**: Always run `npm run build` after code changes before testing
+
 ## Core Quality Rules
 
 ### No Patch Work

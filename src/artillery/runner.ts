@@ -51,6 +51,8 @@ export interface RunResult {
   debugLogPath?: string;
   /** Path to CSV request details file (only when --debug is enabled) */
   csvLogPath?: string;
+  /** Timestamp used for all generated file names */
+  timestamp: number;
 }
 
 export interface RunMetrics {
@@ -99,6 +101,7 @@ export class Runner extends EventEmitter {
    */
   async run(): Promise<RunResult> {
     const startTime = Date.now();
+    const timestamp = Date.now(); // Single timestamp for all generated files
     const errors: string[] = [];
 
     try {
@@ -133,6 +136,7 @@ export class Runner extends EventEmitter {
           outputPath: '',
           metrics: this.emptyMetrics(),
           errors: validation.errors,
+          timestamp,
         };
       }
 
@@ -147,14 +151,14 @@ export class Runner extends EventEmitter {
       // Get absolute path to the processor module (in same dir as runner)
       const processorModulePath = join(__dirname, 'processor.js');
 
-      // Generate debug log path if debug mode is enabled
+      // Generate debug log path if debug mode is enabled (use shared timestamp)
       const debugLogPath = this.options.debug
-        ? resolve(this.options.outputDir!, `debug-${Date.now()}.log`)
+        ? resolve(this.options.outputDir!, `debug-${timestamp}.log`)
         : undefined;
 
-      // Generate CSV log path if debug mode is enabled
+      // Generate CSV log path if debug mode is enabled (use shared timestamp)
       const csvLogPath = this.options.debug
-        ? resolve(this.options.outputDir!, `request-details-${Date.now()}.csv`)
+        ? resolve(this.options.outputDir!, `request-details-${timestamp}.csv`)
         : undefined;
 
       // CSV sampling options
@@ -182,14 +186,15 @@ export class Runner extends EventEmitter {
           outputPath: this.tempDir,
           metrics: this.emptyMetrics(),
           errors: [],
+          timestamp,
         };
       }
 
-      // Run Artillery
+      // Run Artillery (use shared timestamp for JSON report path)
       // Use absolute path so Artillery writes to correct location regardless of cwd
       const outputPath = resolve(
         this.options.outputDir!,
-        `report-${Date.now()}.json`
+        `report-${timestamp}.json`
       );
       await mkdir(dirname(outputPath), { recursive: true });
 
@@ -211,6 +216,7 @@ export class Runner extends EventEmitter {
         errors: result.errors,
         debugLogPath,
         csvLogPath,
+        timestamp,
       };
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -220,6 +226,7 @@ export class Runner extends EventEmitter {
         outputPath: '',
         metrics: this.emptyMetrics(),
         errors,
+        timestamp,
       };
     }
   }

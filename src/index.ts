@@ -251,6 +251,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
     let currentPhase = '';
     let progressInterval: ReturnType<typeof setInterval> | null = null;
     let lastLineCount = 0;
+    let testComplete = false;
 
     // Clear previous progress lines
     const clearProgress = () => {
@@ -267,7 +268,8 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       clearProgress();
 
       const elapsed = Date.now() - startTime;
-      const progressBar = renderProgressBar(elapsed, totalDurationMs);
+      const isFinishing = elapsed >= totalDurationMs && !testComplete;
+      const progressBar = renderProgressBar(elapsed, totalDurationMs, 30, isFinishing);
       const elapsedStr = formatDuration(elapsed);
       const totalStr = formatDuration(totalDurationMs);
       const progressStats = formatProgressStats(stats);
@@ -280,6 +282,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
         progressStats.profileLine ? chalk.magenta(`   Profiles: ${progressStats.profileLine}`) : '',
         progressStats.errorBreakdown ? chalk.red(`   ⚠️  ${progressStats.errorBreakdown}`) : '',
         currentPhase ? chalk.blue(`   Phase: ${currentPhase}`) : '',
+        isFinishing ? chalk.yellow(`   Status: Collecting final responses and processing results...`) : '',
         '',
       ].filter(Boolean);
 
@@ -332,6 +335,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
           break;
         }
         case 'complete':
+          testComplete = true;
           if (progressInterval) {
             clearInterval(progressInterval);
             progressInterval = null;
@@ -376,7 +380,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
 
     const formats = options.format as string[];
     const outputDir = options.output as string;
-    const timestamp = Date.now();
+    const timestamp = result.timestamp;
 
     if (formats.includes('markdown')) {
       const mdPath = join(outputDir, `report-${timestamp}.md`);

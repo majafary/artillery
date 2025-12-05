@@ -749,6 +749,7 @@ Options:
   -v, --verbose               Verbose output (shows Artillery's raw output)
   -q, --quiet                 Minimal output (no progress bar)
   --debug                     Log HTTP request/response details to debug-*.log file
+  --sample-all                Log all requests to CSV (warning: large files for big tests)
 ```
 
 **Environment resolution**: The `-e` flag accepts either:

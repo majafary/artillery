@@ -70,13 +70,19 @@ export function formatNumber(num: number): string {
 export function renderProgressBar(
   elapsed: number,
   total: number,
-  width: number = 30
+  width: number = 30,
+  isFinishing: boolean = false
 ): string {
   const percent = Math.min(100, Math.round((elapsed / total) * 100));
   const filled = Math.round((percent / 100) * width);
   const empty = width - filled;
 
-  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${percent}%`;
+  let statusSuffix = '';
+  if (isFinishing && percent === 100) {
+    statusSuffix = ' - Finishing up...';
+  }
+
+  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${percent}%${statusSuffix}`;
 }
 
 /**
