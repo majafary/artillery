@@ -885,6 +885,45 @@ If conditional branching isn't working:
 2. **Check operator**: `eq` for exact match, `contains` for partial
 3. **Inspect response**: Add `--verbose` to see actual API responses
 
+### CSV Logging Limitations
+
+When using the `--debug` flag, Shield Artillery generates a CSV file (`request-details-*.csv`) with HTTP request and response details. However, **network-level errors are not captured in the CSV file**.
+
+**Why network errors are not logged to CSV:**
+- CSV logging only happens when an HTTP response is received
+- Network errors occur at the TCP/connection level, before an HTTP response exists
+- Without a response object, there's no data to log to the CSV
+
+**Network errors NOT captured in CSV:**
+- `ECONNREFUSED` - Connection refused (server not listening)
+- `ETIMEDOUT` - Connection timeout
+- `EHOSTUNREACH` - Host unreachable
+- `ENOTFOUND` - DNS lookup failed
+- `ENETUNREACH` - Network unreachable
+- `socket hang up` - Connection dropped
+- `ESOCKETTIMEDOUT` - Socket timeout
+- `EPROTO` - Protocol error
+- `EPIPE` - Broken pipe
+
+**Where to find network errors:**
+- These errors ARE captured in the debug log file (`debug-*.log`) when using `--debug`
+- Artillery's JSON report (`report-*.json`) also includes error counts
+- Run with `--verbose` to see error details in console output
+
+**What IS logged to CSV:**
+- All successful HTTP responses (2xx status codes)
+- Client errors (4xx status codes)
+- Server errors (5xx status codes)
+- Any response that returns an HTTP status code
+
+```bash
+# Example: Debug network connectivity issues
+node dist/index.js run journey.json -e env.json --debug --verbose
+
+# Check debug log for network errors
+grep -i "ECONNREFUSED\|ETIMEDOUT\|EHOSTUNREACH" ./reports/debug-*.log
+```
+
 ### Debugging Tips
 
 ```bash
