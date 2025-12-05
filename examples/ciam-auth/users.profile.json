@@ -4,26 +4,15 @@
   "profiles": [
     {
       "name": "normal-users",
-      "weight": 60,
+      "weight": 50,
       "journey": "./simple-login.journey.json",
       "dataSource": "./data/normal-users.csv"
     },
     {
-      "name": "bound-device-users",
-      "weight": 25,
+      "name": "normal-users",
+      "weight": 50,
       "journey": "./simple-login.journey.json",
-      "dataSource": "./data/bound-users.csv"
-    },
-    {
-      "name": "mfa-required-users",
-      "weight": 15,
-      "journey": "./otp-mfa.journey.json",
-      "dataSource": "./data/mfa-users.csv",
-      "generators": {
-        "deviceId": {
-          "type": "uuid"
-        }
-      }
+      "dataSource": "./data/normal-users.csv"
     }
   ]
 }

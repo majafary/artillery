@@ -35,6 +35,10 @@ export interface RunnerOptions {
   dryRun?: boolean;
   /** Debug mode - log HTTP request/response details */
   debug?: boolean;
+  /** Sample all requests to CSV (warning: large files for big tests) */
+  sampleAll?: boolean;
+  /** Only sample error responses (non-2xx) to CSV */
+  sampleErrors?: boolean;
 }
 
 export interface RunResult {
@@ -45,6 +49,8 @@ export interface RunResult {
   errors: string[];
   /** Path to debug log file (only when --debug is enabled) */
   debugLogPath?: string;
+  /** Path to CSV request details file (only when --debug is enabled) */
+  csvLogPath?: string;
 }
 
 export interface RunMetrics {
@@ -82,6 +88,8 @@ export class Runner extends EventEmitter {
       quiet: false,
       dryRun: false,
       debug: false,
+      sampleAll: false,
+      sampleErrors: false,
       ...options,
     };
   }
@@ -144,11 +152,26 @@ export class Runner extends EventEmitter {
         ? resolve(this.options.outputDir!, `debug-${Date.now()}.log`)
         : undefined;
 
+      // Generate CSV log path if debug mode is enabled
+      const csvLogPath = this.options.debug
+        ? resolve(this.options.outputDir!, `request-details-${Date.now()}.csv`)
+        : undefined;
+
+      // CSV sampling options
+      const csvOptions = {
+        sampleSize: 100, // Default: first 100 requests
+        sampleAll: this.options.sampleAll ?? false,
+        errorsOnly: this.options.sampleErrors ?? false,
+      };
+
       // Generate Artillery script
       const script = generator.generate();
 
       await writeFile(scriptPath, script.yaml);
-      await writeFile(processorPath, generator.generateProcessor(processorModulePath, debugLogPath));
+      await writeFile(
+        processorPath,
+        generator.generateProcessor(processorModulePath, debugLogPath, csvLogPath, csvOptions)
+      );
 
       this.emit('generated', { scriptPath, processorPath });
 
@@ -187,6 +210,7 @@ export class Runner extends EventEmitter {
         metrics,
         errors: result.errors,
         debugLogPath,
+        csvLogPath,
       };
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));

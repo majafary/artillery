@@ -249,10 +249,88 @@ export class ReportDataBuilder {
   /**
    * Build latency section
    * Supports both Artillery v2 (histograms) and v1 (flat latency) formats
+   *
+   * For consistency with step-level metrics, we prefer step.*.response_time histograms
+   * when available (especially for single-step journeys), as these include the full
+   * step execution time including processor overhead.
    */
   private buildLatency(aggregate: ArtilleryAggregate): LatencyMetrics {
-    // v2 format: histograms['http.response_time']
     const histograms = aggregate.histograms || {};
+
+    // First, try to aggregate from step-level response_time histograms for consistency
+    // with the Step-by-Step Performance section
+    const stepHistograms: Array<{
+      min?: number;
+      max?: number;
+      mean?: number;
+      median?: number;
+      p50?: number;
+      p90?: number;
+      p95?: number;
+      p99?: number;
+      count?: number;
+    }> = [];
+
+    for (const [key, hist] of Object.entries(histograms)) {
+      if (key.match(/^step\.[^.]+\.response_time$/) && hist) {
+        stepHistograms.push(hist);
+      }
+    }
+
+    // If we have step histograms, compute aggregate latency from them
+    if (stepHistograms.length > 0) {
+      // For a single step, use its values directly
+      if (stepHistograms.length === 1) {
+        const h = stepHistograms[0];
+        return {
+          min: h.min || 0,
+          max: h.max || 0,
+          mean: Math.round(h.mean || 0),
+          median: h.median || h.p50 || 0,
+          p90: h.p90 || 0,
+          p95: h.p95 || 0,
+          p99: h.p99 || 0,
+          stdDev: 0,
+        };
+      }
+
+      // For multiple steps, compute weighted averages based on count
+      // and take min/max across all steps
+      let totalCount = 0;
+      let weightedMean = 0;
+      let minVal = Infinity;
+      let maxVal = 0;
+      // For percentiles, we take the max across steps (conservative approach)
+      let maxP90 = 0;
+      let maxP95 = 0;
+      let maxP99 = 0;
+      let maxMedian = 0;
+
+      for (const h of stepHistograms) {
+        const count = h.count || 1;
+        totalCount += count;
+        weightedMean += (h.mean || 0) * count;
+        if (h.min !== undefined && h.min < minVal) minVal = h.min;
+        if (h.max !== undefined && h.max > maxVal) maxVal = h.max;
+        if ((h.median || h.p50 || 0) > maxMedian) maxMedian = h.median || h.p50 || 0;
+        if ((h.p90 || 0) > maxP90) maxP90 = h.p90 || 0;
+        if ((h.p95 || 0) > maxP95) maxP95 = h.p95 || 0;
+        if ((h.p99 || 0) > maxP99) maxP99 = h.p99 || 0;
+      }
+
+      return {
+        min: minVal === Infinity ? 0 : minVal,
+        max: maxVal,
+        mean: Math.round(totalCount > 0 ? weightedMean / totalCount : 0),
+        median: maxMedian,
+        p90: maxP90,
+        p95: maxP95,
+        p99: maxP99,
+        stdDev: 0,
+      };
+    }
+
+    // Fallback: v2 format histograms['http.response_time']
     const responseTimeHist = histograms['http.response_time'] || {};
 
     // v1 format: aggregate.latency

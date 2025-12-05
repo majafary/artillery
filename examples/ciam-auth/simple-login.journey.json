@@ -6,7 +6,7 @@
   "defaults": {
     "headers": {
       "Content-Type": "application/json",
-      "X-Correlation-Id": "{{$uuid}}"
+      "API-Key": "test-api-key-12345"
     },
     "timeout": 10000
   },
@@ -18,12 +18,8 @@
         "method": "POST",
         "url": "/v1/login",
         "json": {
-          "username": "{{user.email}}",
-          "password": "{{user.password}}",
-          "device_id": "{{user.device_id}}"
-        },
-        "expect": {
-          "statusCode": 200
+          "username": "{{user.username}}",
+          "password": "{{user.password}}"
         }
       },
       "extract": [

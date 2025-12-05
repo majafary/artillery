@@ -33,8 +33,8 @@ const server = http.createServer((req, res) => {
         `REQ ${reqNum} | ${delay}ms | Body: ${body.substring(0, 80)}`
       );
 
-      // Return 201 for all requests
-      res.writeHead(201, { "Content-Type": "application/json" });
+      // Return 200 for all requests (matching journey's expected statusCode)
+      res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
           access_token: "tok-" + reqNum,

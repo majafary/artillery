@@ -18,6 +18,7 @@ import { Runner } from './artillery/runner.js';
 import { buildReportData } from './reporters/report-data-builder.js';
 import { saveMarkdownReport } from './reporters/markdown-reporter.js';
 import { saveHtmlReport } from './reporters/html-reporter.js';
+import { printConsoleSummary } from './reporters/console-summary.js';
 import type { EnvironmentConfig, CliOptions, Journey } from './types/index.js';
 import {
   parseDuration,
@@ -62,6 +63,7 @@ async function main() {
     .option('-v, --verbose', 'Verbose output')
     .option('-q, --quiet', 'Minimal output')
     .option('--debug', 'Log HTTP request/response details to debug file')
+    .option('--sample-all', 'Log all requests to CSV (default: first 100 + errors)')
     .action(async (journeyPath: string, options) => {
       await runCommand(journeyPath, options);
     });
@@ -236,6 +238,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       verbose: options.verbose as boolean,
       quiet: options.quiet as boolean,
       debug: options.debug as boolean,
+      sampleAll: options.sampleAll as boolean,
     });
 
     if (options.debug) {
@@ -373,7 +376,7 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
 
     const formats = options.format as string[];
     const outputDir = options.output as string;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = Date.now();
 
     if (formats.includes('markdown')) {
       const mdPath = join(outputDir, `report-${timestamp}.md`);
@@ -391,13 +394,17 @@ async function runCommand(journeyPath: string, options: Record<string, unknown>)
       console.log(chalk.yellow(`✓ Debug log: ${result.debugLogPath}`));
     }
 
-    // Print summary
-    console.log(chalk.blue('\n📈 Test Summary:\n'));
-    console.log(`  Total Requests:    ${chalk.white(reportData.summary.totalRequests)}`);
-    console.log(`  Success Rate:      ${chalk.green(((1 - reportData.summary.errorRate) * 100).toFixed(2) + '%')}`);
-    console.log(`  p95 Response Time: ${chalk.yellow(reportData.latency.p95 + 'ms')}`);
-    console.log(`  Throughput:        ${chalk.cyan(reportData.summary.throughput.toFixed(2) + ' req/s')}`);
-    console.log(`  Duration:          ${chalk.gray((result.duration / 1000).toFixed(0) + 's')}`);
+    if (result.csvLogPath) {
+      console.log(chalk.yellow(`✓ Request details CSV: ${result.csvLogPath}`));
+    }
+
+    // Print API status summary table
+    printConsoleSummary(reportData);
+
+    // Print additional performance metrics
+    console.log(chalk.gray(`  p95 Response Time: ${reportData.latency.p95}ms`));
+    console.log(chalk.gray(`  Throughput:        ${reportData.summary.throughput.toFixed(2)} req/s`));
+    console.log(chalk.gray(`  Duration:          ${(result.duration / 1000).toFixed(0)}s`));
 
     // Check thresholds
     const failedThresholds = reportData.thresholdResults.filter((t) => !t.passed);

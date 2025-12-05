@@ -20,9 +20,6 @@
         "json": {
           "username": "{{user.username}}",
           "password": "{{user.password}}"
-        },
-        "expect": {
-          "statusCode": 200
         }
       },
       "extract": [

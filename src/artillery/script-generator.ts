@@ -362,9 +362,32 @@ export class ScriptGenerator {
   }
 
   /**
+   * Debug/CSV logging options for processor generation
+   */
+  static readonly CSV_HEADERS = [
+    'timestamp',
+    'step_id',
+    'step_name',
+    'request_url',
+    'http_method',
+    'request_headers',
+    'request_body',
+    'response_status',
+    'response_headers',
+    'response_body',
+    'response_time_ms',
+    'cookies',
+  ];
+
+  /**
    * Generate processor file content
    */
-  generateProcessor(processorModulePath: string, debugLogPath?: string): string {
+  generateProcessor(
+    processorModulePath: string,
+    debugLogPath?: string,
+    csvLogPath?: string,
+    csvOptions?: { sampleSize?: number; sampleAll?: boolean; errorsOnly?: boolean }
+  ): string {
     // Collect all unique steps from all journeys (default + profile-specific)
     const allSteps = new Map<string, Step>();
 
@@ -391,11 +414,126 @@ module.exports.shouldExecuteStep_${step.id} = function(context) {
     // Escape backslashes for Windows paths
     const escapedPath = processorModulePath.replace(/\\/g, '\\\\');
     const escapedDebugPath = debugLogPath ? debugLogPath.replace(/\\/g, '\\\\') : '';
+    const escapedCsvPath = csvLogPath ? csvLogPath.replace(/\\/g, '\\\\') : '';
+
+    // CSV logging configuration
+    const sampleSize = csvOptions?.sampleSize ?? 100;
+    const sampleAll = csvOptions?.sampleAll ?? false;
+    const errorsOnly = csvOptions?.errorsOnly ?? false;
+
+    // CSV logging setup (generated inline for CommonJS compatibility)
+    const csvSetup = csvLogPath ? `
+// CSV Request Detail Logging
+const CSV_LOG_PATH = '${escapedCsvPath}';
+const CSV_SAMPLE_SIZE = ${sampleSize};
+const CSV_SAMPLE_ALL = ${sampleAll};
+const CSV_ERRORS_ONLY = ${errorsOnly};
+const CSV_MAX_BODY_SIZE = 1024;
+
+// State for CSV logging
+let csvRequestCount = 0;
+let csvSampledCount = 0;
+let csvErrorCount = 0;
+
+// Batch write buffer for CSV logging (reduces I/O operations)
+const csvBuffer = [];
+const CSV_BATCH_SIZE = 50;
+
+// Initialize CSV file with headers
+fs.writeFileSync(CSV_LOG_PATH, 'timestamp,step_id,step_name,request_url,http_method,request_headers,request_body,response_status,response_headers,response_body,response_time_ms,cookies\\n');
+
+// CSV escape function (RFC 4180 compliant)
+function escapeCSV(value) {
+  if (value === undefined || value === null) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\\n') || str.includes('\\r')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+// Truncate string to max length
+function truncateBody(str, maxLength) {
+  if (!str || str.length <= maxLength) return str || '';
+  return str.substring(0, maxLength - 12) + '...[TRUNCATED]';
+}
+
+// Check if request should be logged based on sampling strategy
+function shouldLogRequest(statusCode) {
+  csvRequestCount++;
+  const isError = statusCode < 200 || statusCode >= 300;
+  if (isError) csvErrorCount++;
+
+  if (CSV_SAMPLE_ALL) return true;
+  if (CSV_ERRORS_ONLY) return isError;
+  // Default: first N + errors
+  if (csvRequestCount <= CSV_SAMPLE_SIZE) return true;
+  return isError;
+}
+
+// Flush CSV buffer to disk (reduces I/O operations by batching writes)
+function flushCSVBuffer() {
+  if (csvBuffer.length === 0) return;
+  fs.appendFileSync(CSV_LOG_PATH, csvBuffer.join('\\n') + '\\n');
+  csvBuffer.length = 0;
+}
+
+// Log request to CSV
+function logRequestToCSV(requestParams, response) {
+  const statusCode = response.statusCode || 0;
+  if (!shouldLogRequest(statusCode)) return;
+
+  csvSampledCount++;
+
+  // Extract cookies from response headers
+  const cookies = [];
+  if (response.headers && response.headers['set-cookie']) {
+    const setCookie = response.headers['set-cookie'];
+    if (Array.isArray(setCookie)) cookies.push(...setCookie);
+    else cookies.push(setCookie);
+  }
+
+  // Prepare request body
+  let reqBody = '';
+  if (requestParams.json) {
+    try { reqBody = JSON.stringify(requestParams.json); } catch(e) { reqBody = '[Unable to serialize]'; }
+  } else if (requestParams.body) {
+    reqBody = requestParams.body;
+  }
+
+  // Prepare response body
+  let resBody = '';
+  if (response.body) {
+    if (typeof response.body === 'string') resBody = response.body;
+    else { try { resBody = JSON.stringify(response.body); } catch(e) { resBody = '[Unable to serialize]'; } }
+  }
+
+  const row = [
+    escapeCSV(new Date().toISOString()),
+    escapeCSV(requestParams.__stepId || 'unknown'),
+    escapeCSV(requestParams.__stepName || 'unknown'),
+    escapeCSV(requestParams.url || ''),
+    escapeCSV((requestParams.method || 'GET').toUpperCase()),
+    escapeCSV(JSON.stringify(requestParams.headers || {})),
+    escapeCSV(truncateBody(reqBody, CSV_MAX_BODY_SIZE)),
+    escapeCSV(statusCode),
+    escapeCSV(JSON.stringify(response.headers || {})),
+    escapeCSV(truncateBody(resBody, CSV_MAX_BODY_SIZE)),
+    escapeCSV(response.timings?.phases?.total || 0),
+    escapeCSV(JSON.stringify(cookies))
+  ];
+
+  // Add to buffer instead of immediate write (batched for performance)
+  csvBuffer.push(row.join(','));
+  if (csvBuffer.length >= CSV_BATCH_SIZE) {
+    flushCSVBuffer();
+  }
+}
+` : '';
 
     // Debug logging setup
     const debugSetup = debugLogPath ? `
 // Debug logging setup
-const fs = require('fs');
 const DEBUG_LOG_PATH = '${escapedDebugPath}';
 
 // Initialize debug log file
@@ -482,10 +620,28 @@ module.exports.afterResponse = function(requestParams, response, context, ee, ne
     JSON.stringify(logEntry, null, 2) + '\\n\\n'
   );
 
+  // Log to CSV if enabled
+  if (typeof logRequestToCSV === 'function') {
+    logRequestToCSV(requestParams, response);
+  }
+
   // Call original handler
   return originalAfterResponse(requestParams, response, context, ee, next);
 };
 ` : '';
+
+    // CSV-only afterResponse wrapper (when debug is disabled but CSV is enabled)
+    const csvOnlyAfterResponse = (csvLogPath && !debugLogPath) ? `
+// Wrap afterResponse for CSV logging only
+const originalAfterResponse = processor.afterResponse;
+module.exports.afterResponse = function(requestParams, response, context, ee, next) {
+  logRequestToCSV(requestParams, response);
+  return originalAfterResponse(requestParams, response, context, ee, next);
+};
+` : '';
+
+    // Require fs if either debug or CSV logging is enabled
+    const requireFs = (debugLogPath || csvLogPath) ? "const fs = require('fs');\n" : '';
 
     return `/**
  * Generated Artillery Processor
@@ -493,14 +649,18 @@ module.exports.afterResponse = function(requestParams, response, context, ee, ne
  */
 
 const processor = require('${escapedPath}');
-${debugSetup}
+${requireFs}${csvSetup}${debugSetup}${csvOnlyAfterResponse}
 // Re-export standard processor functions
 module.exports.initialize = processor.initialize;
 module.exports.setupUser = processor.setupUser;
 ${debugLogPath ? '// beforeRequest is wrapped above for debug logging' : 'module.exports.beforeRequest = processor.beforeRequest;'}
-${debugLogPath ? '// afterResponse is wrapped above for debug logging' : 'module.exports.afterResponse = processor.afterResponse;'}
+${(debugLogPath || csvLogPath) ? '// afterResponse is wrapped above for debug/CSV logging' : 'module.exports.afterResponse = processor.afterResponse;'}
 module.exports.think = processor.think;
-module.exports.cleanup = processor.cleanup;
+${csvLogPath ? `// Wrap cleanup to flush CSV buffer before completing
+module.exports.cleanup = function(context, ee, next) {
+  flushCSVBuffer();  // Flush remaining CSV entries
+  return processor.cleanup(context, ee, next);
+};` : 'module.exports.cleanup = processor.cleanup;'}
 
 // Step-specific condition functions
 ${stepConditions.join('\n')}
